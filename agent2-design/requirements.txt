@@ -1,0 +1,9 @@
+fastapi
+uvicorn[standard]
+pydantic
+google-generativeai
+matplotlib
+pillow
+psycopg2-binary
+sqlalchemy
+python-dotenv
