@@ -1,7 +1,7 @@
 fastapi
 uvicorn[standard]
 pydantic
-google-generativeai
+google-genai
 matplotlib
 pillow
 psycopg2-binary
