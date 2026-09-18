@@ -9,6 +9,7 @@ Run: uvicorn main:app --reload --port 8002
 from fastapi import FastAPI
 from pydantic import BaseModel
 from typing import List, Optional
+from design_generator import get_furniture_layout, draw_layout
 
 app = FastAPI(title="Agent 2 - Design Generation")
 
@@ -46,20 +47,17 @@ def health_check():
 
 @app.post("/generate-design", response_model=DesignResponse)
 def generate_design(requirements: Requirements):
-    """
-    TODO:
-    1. Send `requirements` to Gemini, prompt it to suggest furniture items
-       + rough (x, y) placement within the room
-    2. Use matplotlib/PIL to draw a top-down 2D layout image from that output
-    3. Save image, return its path + the furniture list
-    """
-    # Placeholder response
+    layout_data = get_furniture_layout(requirements.dict())
+    image_path = draw_layout(layout_data, color_preference=requirements.color_preference)
+
+    furniture_list = [
+        FurnitureItem(item=f["item"], style=requirements.style, qty=1)
+        for f in layout_data.get("furniture", [])
+    ]
+
     return DesignResponse(
-        layout_image_path="designs/placeholder.png",
-        furniture_needed=[
-            FurnitureItem(item="3-seater sofa", style=requirements.style, qty=1),
-            FurnitureItem(item="coffee table", style=requirements.style, qty=1),
-        ]
+        layout_image_path=image_path,
+        furniture_needed=furniture_list
     )
 
 
