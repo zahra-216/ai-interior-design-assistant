@@ -46,9 +46,26 @@ app.add_middleware(
 os.makedirs("designs", exist_ok=True)
 app.mount("/designs", StaticFiles(directory="designs"), name="designs")
 
+# Create the designs table on a fresh database, and add project_id to older ones
+# (each design version belongs to one room / project, see Agent 1's "My rooms").
+with engine.begin() as _connection:
+    _connection.execute(text("""
+        CREATE TABLE IF NOT EXISTS designs (
+            id SERIAL PRIMARY KEY,
+            user_id VARCHAR NOT NULL,
+            project_id INTEGER,
+            requirements JSONB,
+            layout_data JSONB,
+            image_path VARCHAR,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )"""))
+    _connection.execute(text("ALTER TABLE designs ADD COLUMN IF NOT EXISTS project_id INTEGER"))
+    _connection.execute(text("CREATE INDEX IF NOT EXISTS designs_project_id_idx ON designs (project_id)"))
+
 
 class Requirements(BaseModel):
     user_id: str
+    project_id: Optional[int] = None    # the room this design belongs to
     room_type: str
     style: str
     budget: int
@@ -98,19 +115,21 @@ class DesignResponse(BaseModel):
 
 class ChangeRequest(BaseModel):
     user_id: str
+    project_id: Optional[int] = None
     original_requirements: Requirements
     change_text: str
 
 
-def get_latest_layout(user_id: str) -> Optional[dict]:
+def get_latest_layout(user_id: str, project_id: Optional[int]) -> Optional[dict]:
     sql = text("""
         SELECT layout_data FROM designs
         WHERE user_id = :user_id
+          AND (CAST(:project_id AS INTEGER) IS NULL OR project_id = :project_id)
         ORDER BY created_at DESC, id DESC
         LIMIT 1
     """)
     with engine.connect() as connection:
-        row = connection.execute(sql, {"user_id": user_id}).first()
+        row = connection.execute(sql, {"user_id": user_id, "project_id": project_id}).first()
     return row[0] if row else None
 
 
@@ -152,14 +171,15 @@ def furniture_needed_from(layout_data: dict, requirements: dict) -> List[Furnitu
     return items
 
 
-def save_design(user_id: str, requirements: dict, layout_data: dict, image_path: str):
+def save_design(user_id: str, project_id: Optional[int], requirements: dict, layout_data: dict, image_path: str):
     sql = text("""
-        INSERT INTO designs (user_id, requirements, layout_data, image_path)
-        VALUES (:user_id, :requirements, :layout_data, :image_path)
+        INSERT INTO designs (user_id, project_id, requirements, layout_data, image_path)
+        VALUES (:user_id, :project_id, :requirements, :layout_data, :image_path)
     """)
     with engine.begin() as connection:
         connection.execute(sql, {
             "user_id": user_id,
+            "project_id": project_id,
             "requirements": json.dumps(requirements),
             "layout_data": json.dumps(layout_data),
             "image_path": image_path
@@ -183,7 +203,7 @@ def generate_design(requirements: Requirements, me: str = Depends(current_user))
 
     furniture_needed = furniture_needed_from(layout_data, requirements.model_dump())
     layout_data["furniture_needed"] = [f.model_dump() for f in furniture_needed]  # for session restore
-    save_design(requirements.user_id, requirements.model_dump(), layout_data, image_path)
+    save_design(requirements.user_id, requirements.project_id, requirements.model_dump(), layout_data, image_path)
 
     return DesignResponse(
         layout_image_path=image_path,
@@ -199,7 +219,7 @@ def revise_design(change: ChangeRequest, me: str = Depends(current_user),
     requirements = change.original_requirements.model_dump()
     try:
         layout_data, updated_fields = revise_furniture_layout(
-            requirements, change.change_text, get_latest_layout(change.user_id)
+            requirements, change.change_text, get_latest_layout(change.user_id, change.project_id)
         )
     except GeminiUnavailableError:
         raise HTTPException(status_code=503, detail="The AI is busy right now. Please try the change again in a minute.")
@@ -214,6 +234,7 @@ def revise_design(change: ChangeRequest, me: str = Depends(current_user),
         try:
             requests.post(
                 f"{AGENT1_URL}/requirements/{change.user_id}/update",
+                params={"project_id": change.project_id} if change.project_id else None,
                 json=updated_fields,
                 headers={"Authorization": authorization},  # act as the logged-in user
                 timeout=5
@@ -224,7 +245,7 @@ def revise_design(change: ChangeRequest, me: str = Depends(current_user),
     updated_requirements = {**requirements, **updated_fields}
     furniture_needed = furniture_needed_from(layout_data, updated_requirements)
     layout_data["furniture_needed"] = [f.model_dump() for f in furniture_needed]  # for session restore
-    save_design(change.user_id, updated_requirements, layout_data, image_path)
+    save_design(change.user_id, change.project_id, updated_requirements, layout_data, image_path)
 
     return DesignResponse(
         layout_image_path=image_path,
@@ -237,18 +258,20 @@ def revise_design(change: ChangeRequest, me: str = Depends(current_user),
 # NOTE: not under /designs/..., which is where the layout images are served from
 # (the static mount would swallow these routes).
 @app.get("/design-history/{user_id}")
-def get_designs(user_id: str, me: str = Depends(current_user)):
+def get_designs(user_id: str, project_id: Optional[int] = None, me: str = Depends(current_user)):
+    """Design versions, newest first: one room's (project_id) or all of the user's."""
     ensure_owner(me, user_id)
     sql = text("""
-        SELECT id, requirements, layout_data, image_path, created_at
+        SELECT id, project_id, requirements, layout_data, image_path, created_at
         FROM designs
         WHERE user_id = :user_id
-        ORDER BY created_at DESC
+          AND (CAST(:project_id AS INTEGER) IS NULL OR project_id = :project_id)
+        ORDER BY created_at DESC, id DESC
     """)
     with engine.connect() as connection:
-        results = connection.execute(sql, {"user_id": user_id}).mappings().all()
+        results = connection.execute(sql, {"user_id": user_id, "project_id": project_id}).mappings().all()
 
-    return {"user_id": user_id, "designs": [dict(r) for r in results]}
+    return {"user_id": user_id, "project_id": project_id, "designs": [dict(r) for r in results]}
 
 
 # Example output JSON contract (sent to Agent 3):
@@ -262,9 +285,16 @@ def get_designs(user_id: str, me: str = Depends(current_user)):
 # }
 
 @app.delete("/design-history/{user_id}")
-def delete_designs(user_id: str, me: str = Depends(current_user)):
+def delete_designs(user_id: str, project_id: Optional[int] = None, me: str = Depends(current_user)):
+    """Delete one room's designs (project_id) or all of the user's, including the layout images."""
     ensure_owner(me, user_id)
-    sql = text("DELETE FROM designs WHERE user_id = :user_id")
+    where = "user_id = :user_id AND (CAST(:project_id AS INTEGER) IS NULL OR project_id = :project_id)"
+    params = {"user_id": user_id, "project_id": project_id}
     with engine.begin() as connection:
-        connection.execute(sql, {"user_id": user_id})
-    return {"status": "deleted", "user_id": user_id}
+        paths = [r[0] for r in connection.execute(text(f"SELECT image_path FROM designs WHERE {where}"), params)]
+        connection.execute(text(f"DELETE FROM designs WHERE {where}"), params)
+    for path in paths:
+        # only files inside our designs folder
+        if path and os.path.dirname(os.path.normpath(path)) == "designs" and os.path.exists(path):
+            os.remove(path)
+    return {"status": "deleted", "user_id": user_id, "project_id": project_id, "images_removed": len(paths)}

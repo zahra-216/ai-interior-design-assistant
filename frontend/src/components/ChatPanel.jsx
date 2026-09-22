@@ -3,7 +3,7 @@ import { sendChatMessage } from '../api'
 import OpeningsPicker from './OpeningsPicker'
 import './ChatPanel.css'
 
-export default function ChatPanel({ userId, initialMessages, onRequirementsComplete, locked = false }) {
+export default function ChatPanel({ userId, projectId, initialMessages, onRequirementsComplete, locked = false }) {
   const [messages, setMessages] = useState([
     { role: 'assistant', content: "Let's start. What room are you designing?" }
   ])
@@ -33,7 +33,7 @@ export default function ChatPanel({ userId, initialMessages, onRequirementsCompl
     setSending(true)
 
     try {
-      const res = await sendChatMessage(userId, text, openings)
+      const res = await sendChatMessage(userId, text, openings, projectId)
       setMessages(prev => [...prev, { role: 'assistant', content: res.reply, widget: res.widget }])
 
       if (res.requirements_complete && res.requirements) {

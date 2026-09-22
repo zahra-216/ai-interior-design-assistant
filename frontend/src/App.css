@@ -79,10 +79,6 @@
   font-size: var(--text-sm);
 }
 
-.app__new-chat {
-  margin-left: auto;
-}
-
 .app__user {
   align-self: center;
   font-size: var(--text-sm);

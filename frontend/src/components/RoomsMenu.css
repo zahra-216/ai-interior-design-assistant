@@ -1,0 +1,84 @@
+.rooms-menu {
+  position: relative;
+  align-self: center;
+  margin-left: auto;
+}
+
+.rooms-menu__toggle {
+  padding: var(--space-2) var(--space-4);
+  font-size: var(--text-sm);
+}
+
+.rooms-menu__panel {
+  position: absolute;
+  right: 0;
+  top: calc(100% + var(--space-2));
+  width: 340px;
+  max-height: 420px;
+  overflow-y: auto;
+  background: var(--paper-raised);
+  border: var(--line);
+  border-radius: var(--radius-md);
+  box-shadow: 0 8px 24px rgba(31, 36, 32, 0.12);
+  z-index: 20;
+  padding: var(--space-2);
+}
+
+.rooms-menu__empty {
+  padding: var(--space-3);
+  font-size: var(--text-sm);
+  color: var(--ink-soft);
+}
+
+.rooms-menu__item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.rooms-menu__item:hover,
+.rooms-menu__item:focus-visible {
+  background: var(--stone-soft);
+  outline: none;
+}
+
+.rooms-menu__item--current {
+  background: var(--sage-soft);
+}
+
+.rooms-menu__text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+
+.rooms-menu__title {
+  font-size: var(--text-sm);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rooms-menu__meta {
+  font-size: var(--text-xs);
+  color: var(--ink-soft);
+}
+
+.rooms-menu__delete {
+  background: none;
+  border: none;
+  color: var(--danger);
+  font-size: var(--text-xs);
+  cursor: pointer;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+}
+
+.rooms-menu__delete:hover {
+  background: #F2DAD5;
+}

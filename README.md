@@ -55,6 +55,22 @@ AUTH_SECRET=<long random string>
 AUTH_TOKEN_TTL_HOURS=168
 ```
 
+## Database and "My rooms"
+
+The agents create their own tables on startup, so a new machine only needs an empty PostgreSQL
+database and `DATABASE_URL` in each agent's `.env`:
+
+| Table | Created by | Holds |
+|---|---|---|
+| `users`, `projects`, `conversations`, `requirements` | Agent 1 | accounts, rooms, chats, final requirements |
+| `designs` | Agent 2 | layout versions (images in `agent2-design/designs/`) |
+| `products` | Agent 3 | catalog; fill it with `python import_csv.py real_products.csv` |
+
+Each user can have several rooms (**projects**). A project has one chat, one set of final
+requirements and any number of design versions. *New chat* starts a new room; earlier rooms stay
+under *My rooms*. Older databases (one chat per user) are upgraded automatically on Agent 1's
+first start: each user's existing data becomes their first room.
+
 ## JSON Contracts Between Agents
 
 **Agent 1 -> Agent 2:**

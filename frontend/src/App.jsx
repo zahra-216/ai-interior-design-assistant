@@ -4,9 +4,11 @@ import ChatPanel from './components/ChatPanel'
 import FloorPlanPanel from './components/FloorPlanPanel'
 import FurnitureSchedule from './components/FurnitureSchedule'
 import CostSummary from './components/CostSummary'
+import RoomsMenu from './components/RoomsMenu'
 import {
   generateDesign, reviseDesign, searchFurniture, estimateCost, optimizeBudget,
-  getChatHistory, getDesignHistory, deleteConversation, deleteDesigns, setAuth
+  getChatHistory, getDesignHistory, deleteDesigns, setAuth,
+  getProjects, createProject, deleteProject
 } from './api'
 import './App.css'
 
@@ -22,17 +24,33 @@ function errorDetail(err, fallback) {
   return fallback
 }
 
-// Accepted "Fit to my budget" swaps are remembered for the whole session (they survive a
-// refresh and later layout changes; New chat clears them). A swap only applies while the
-// item still gets the same original product.
-const swapsKey = userId => `swaps:${userId}`
+// Accepted "Fit to my budget" swaps are remembered per room (they survive a refresh and
+// later layout changes). A swap only applies while the item still gets the same original product.
+const swapsKey = (userId, projectId) => `swaps:${userId}:${projectId}`
 
-function loadSwaps(userId) {
+function loadSwaps(userId, projectId) {
   try {
-    return JSON.parse(localStorage.getItem(swapsKey(userId))) || []
+    return JSON.parse(localStorage.getItem(swapsKey(userId, projectId))) || []
   } catch {
     return []
   }
+}
+
+// The room that was open last, so a refresh reopens it
+const projectKey = userId => `project:${userId}`
+
+function storedProject(userId) {
+  try {
+    return Number(localStorage.getItem(projectKey(userId))) || null
+  } catch {
+    return null
+  }
+}
+
+function rememberProject(userId, projectId) {
+  try {
+    localStorage.setItem(projectKey(userId), String(projectId))
+  } catch { /* ignore */ }
 }
 
 function applySwaps(products, swaps) {
@@ -80,6 +98,8 @@ export default function App() {
   })
   const [loginNotice, setLoginNotice] = useState(null)
   const userId = session?.userId || null
+  const [projectId, setProjectId] = useState(null)
+  const [projects, setProjects] = useState([])
   const [chatKey, setChatKey] = useState(0)
   const [initialMessages, setInitialMessages] = useState(null)
   const [requirements, setRequirements] = useState(null)
@@ -108,10 +128,32 @@ export default function App() {
     return () => clearTimeout(timer)
   }, [session, chatKey])
 
+  async function refreshProjects() {
+    try {
+      const list = (await getProjects(userId)).projects || []
+      setProjects(list)
+      return list
+    } catch (err) {
+      console.error('Could not load rooms', err)
+      return null
+    }
+  }
+
+  // Open the remembered room (or the latest one, or a brand new one) and restore it
   async function restoreSession() {
     setRestoring(true)
     try {
-      const res = await getChatHistory(userId)
+      const list = await refreshProjects() || []
+      let current = storedProject(userId)
+      if (!list.some(p => p.id === current)) current = list[0]?.id ?? null
+      if (current === null) {
+        current = (await createProject(userId)).project_id
+        await refreshProjects()
+      }
+      rememberProject(userId, current)
+      setProjectId(current)
+
+      const res = await getChatHistory(userId, current)
 
       if (res.messages && res.messages.length > 0) {
         setInitialMessages(res.messages.map(m => ({ role: m.role, content: m.content, widget: m.widget })))
@@ -125,7 +167,7 @@ export default function App() {
       if (isComplete) {
         setRequirements(req)
 
-        const history = await getDesignHistory(userId)
+        const history = await getDesignHistory(userId, current)
         if (history.designs && history.designs.length > 0) {
           const latest = history.designs[0]
           const restoredDesign = {
@@ -140,7 +182,7 @@ export default function App() {
             warnings: latest.layout_data.warnings || []
           }
           setDesign(restoredDesign)
-          await fetchFurnitureAndCost(restoredDesign, req)
+          await fetchFurnitureAndCost(restoredDesign, req, current)
         }
       }
     } catch (err) {
@@ -180,16 +222,40 @@ export default function App() {
     setSession(null)
   }
 
-  async function handleNewChat() {
-    try {
-      await deleteConversation(userId)
-      await deleteDesigns(userId)
-      localStorage.removeItem(swapsKey(userId))
-    } catch (err) {
-      console.error('Could not clear previous session', err)
-    }
+  // Switch rooms: remember the choice and let restoreSession load it
+  function openProject(id) {
+    rememberProject(userId, id)
     resetWorkspace()
     setChatKey(k => k + 1)
+  }
+
+  // New chat = a new room. Earlier rooms stay in "My rooms".
+  async function handleNewChat() {
+    try {
+      const { project_id } = await createProject(userId)
+      openProject(project_id)
+    } catch (err) {
+      console.error(err)
+      setError(errorDetail(err, 'Could not start a new room. Please try again.'))
+    }
+  }
+
+  async function handleDeleteProject(id) {
+    try {
+      await deleteDesigns(userId, id)
+      await deleteProject(id)
+      try { localStorage.removeItem(swapsKey(userId, id)) } catch { /* ignore */ }
+      if (id === projectId) {
+        try { localStorage.removeItem(projectKey(userId)) } catch { /* ignore */ }
+        resetWorkspace()
+        setChatKey(k => k + 1)  // reopens the latest remaining room (or a new one)
+      } else {
+        await refreshProjects()
+      }
+    } catch (err) {
+      console.error(err)
+      setError(errorDetail(err, 'Could not delete that room.'))
+    }
   }
 
   if (!session) {
@@ -200,7 +266,8 @@ export default function App() {
     setRequirements(reqs)
     setDesignLoading(true)
     try {
-      const designRes = await generateDesign({ user_id: userId, ...reqs })
+      refreshProjects()  // the room now has a title and is "Designed"
+      const designRes = await generateDesign({ user_id: userId, ...reqs, project_id: projectId })
       setDesign(designRes)
       await fetchFurnitureAndCost(designRes, reqs)
     } catch (err) {
@@ -216,12 +283,12 @@ export default function App() {
     return (designRes?.furniture_needed || []).find(f => f.item === item) || {}
   }
 
-  async function fetchFurnitureAndCost(designRes, reqs) {
+  async function fetchFurnitureAndCost(designRes, reqs, room = projectId) {
     setProposal(null)
     setProductsLoading(true)
     try {
       const matched = await searchFurniture(designRes.layout_image_path, designRes.furniture_needed)
-      const withSwaps = applySwaps(matched, loadSwaps(userId))
+      const withSwaps = applySwaps(matched, loadSwaps(userId, room))
       setProducts(withSwaps)
       setProductsLoading(false)
       await updateCost(withSwaps, designRes, reqs.budget)
@@ -272,7 +339,7 @@ export default function App() {
     if (!requirements) return
     setDesignLoading(true)
     try {
-      const designRes = await reviseDesign(userId, { user_id: userId, ...requirements }, changeText)
+      const designRes = await reviseDesign(userId, { user_id: userId, ...requirements }, changeText, projectId)
       // A revision can change the budget, colours or style; keep them in sync here too
       const updatedReqs = { ...requirements, ...(designRes.requirement_updates || {}) }
       setRequirements(updatedReqs)
@@ -301,9 +368,9 @@ export default function App() {
 
   async function handleApplyProposal() {
     if (!proposal) return
-    const swaps = [...loadSwaps(userId), ...proposal.optimized_items]
+    const swaps = [...loadSwaps(userId, projectId), ...proposal.optimized_items]
     try {
-      localStorage.setItem(swapsKey(userId), JSON.stringify(swaps))
+      localStorage.setItem(swapsKey(userId, projectId), JSON.stringify(swaps))
     } catch { /* storage unavailable: swaps just won't survive a refresh */ }
     const swapped = applySwaps(products, proposal.optimized_items)
     setProducts(swapped)
@@ -316,6 +383,13 @@ export default function App() {
       <header className="app__header">
         <span className="app__wordmark">Studio</span>
         <span className="app__tagline">AI interior design, made for Sri Lankan homes</span>
+        <RoomsMenu
+          projects={projects}
+          currentId={projectId}
+          onOpen={openProject}
+          onDelete={handleDeleteProject}
+          onRefresh={refreshProjects}
+        />
         <button className="btn-secondary app__new-chat" onClick={handleNewChat}>
           New chat
         </button>
@@ -339,6 +413,7 @@ export default function App() {
             <ChatPanel
               key={chatKey}
               userId={userId}
+              projectId={projectId}
               initialMessages={initialMessages}
               onRequirementsComplete={handleRequirementsComplete}
               locked={!!requirements}

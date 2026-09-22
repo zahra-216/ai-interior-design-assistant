@@ -44,10 +44,7 @@ if not DATABASE_URL:
 
 engine = create_engine(DATABASE_URL)
 
-# Extra structured details (items, placements, doors/windows) live in a JSONB
-# column next to the original six fields. Additive and safe to run every start.
-with engine.begin() as _connection:
-    _connection.execute(text("ALTER TABLE requirements ADD COLUMN IF NOT EXISTS details JSONB"))
+# Tables are created / upgraded by migrate_schema() (see SCHEMA below).
 
 
 # ============================================================
@@ -76,6 +73,8 @@ class ChatMessage(BaseModel):
     # Set when the user answered with the door/window picker instead of typing:
     # [{"type": "door"|"window", "wall": "bottom"|"top"|"left"|"right", "position": "left"|"center"|"right"|"start"|"end"}]
     openings: Optional[List[dict]] = None
+    # Which room this message belongs to ("My rooms"). Omitted: the user's latest room.
+    project_id: Optional[int] = None
 
 
 # ============================================================
@@ -88,6 +87,7 @@ class ChatResponse(BaseModel):
     requirements: Optional[dict] = None
     # "openings" when the reply asks where the door/windows are, so the UI can show the picker
     widget: Optional[str] = None
+    project_id: Optional[int] = None
 
 class SignupRequest(BaseModel):
     username: str
@@ -425,12 +425,79 @@ def completion_summary(requirements: dict) -> str:
 # ============================================================
 # DATABASE HELPERS
 # ============================================================
+#
+# Each user can have several rooms ("projects"). A project owns one conversation,
+# at most one final requirements row, and (in Agent 2) its design versions.
 
-def save_requirements(user_id, requirements):
+def project_title(requirements: dict) -> str:
+    room = (requirements.get("room_type") or "").strip()
+    if not room:
+        return "New room"
+    size = (requirements.get("room_size") or "").strip()
+    return room[:1].upper() + room[1:] + (f" · {size}" if size else "")
+
+
+def get_project(project_id: int):
+    with engine.connect() as connection:
+        return connection.execute(
+            text("SELECT id, user_id, title, status, created_at, updated_at FROM projects WHERE id = :id"),
+            {"id": project_id}
+        ).mappings().first()
+
+
+def owned_project(project_id: int, me: str) -> dict:
+    """The project, if it exists and belongs to the logged-in user (404 / 403 otherwise)."""
+    project = get_project(project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="That room no longer exists.")
+    ensure_owner(me, project["user_id"])
+    return dict(project)
+
+
+def create_project(user_id: str) -> int:
+    with engine.begin() as connection:
+        return connection.execute(
+            text("INSERT INTO projects (user_id) VALUES (:user_id) RETURNING id"),
+            {"user_id": user_id}
+        ).scalar()
+
+
+def latest_project_id(user_id: str):
+    with engine.connect() as connection:
+        return connection.execute(
+            text("SELECT id FROM projects WHERE user_id = :user_id ORDER BY updated_at DESC, id DESC LIMIT 1"),
+            {"user_id": user_id}
+        ).scalar()
+
+
+def resolve_project(user_id: str, project_id, me: str, create: bool = False):
+    """Use the given project (checking ownership), else the user's latest (optionally creating one)."""
+    if project_id is not None:
+        owned_project(project_id, me)
+        return project_id
+    latest = latest_project_id(user_id)
+    if latest is None and create:
+        latest = create_project(user_id)
+    return latest
+
+
+def touch_project(connection, project_id: int, requirements: dict, status: str = None):
+    connection.execute(
+        text("""
+            UPDATE projects
+            SET title = :title, updated_at = CURRENT_TIMESTAMP, status = COALESCE(:status, status)
+            WHERE id = :id
+        """),
+        {"id": project_id, "title": project_title(requirements), "status": status}
+    )
+
+
+def save_requirements(user_id, project_id, requirements):
 
     sql = text("""
         INSERT INTO requirements (
             user_id,
+            project_id,
             room_type,
             style,
             budget,
@@ -442,6 +509,7 @@ def save_requirements(user_id, requirements):
         )
         VALUES (
             :user_id,
+            :project_id,
             :room_type,
             :style,
             :budget,
@@ -451,7 +519,7 @@ def save_requirements(user_id, requirements):
             :details,
             CURRENT_TIMESTAMP
         )
-        ON CONFLICT (user_id)
+        ON CONFLICT (project_id)
         DO UPDATE SET
             room_type = EXCLUDED.room_type,
             style = EXCLUDED.style,
@@ -472,6 +540,7 @@ def save_requirements(user_id, requirements):
             sql,
             {
                 "user_id": user_id,
+                "project_id": project_id,
                 "room_type": requirements.get("room_type"),
                 "style": requirements.get("style"),
                 "budget": requirements.get("budget"),
@@ -485,11 +554,15 @@ def save_requirements(user_id, requirements):
                 "details": json.dumps(details)
             }
         )
+        touch_project(connection, project_id, requirements, status="complete")
 
-def get_conversation(user_id: str) -> dict:
-    sql = text("SELECT messages, requirements FROM conversations WHERE user_id = :user_id")
-    with engine.connect() as connection:
-        result = connection.execute(sql, {"user_id": user_id}).mappings().first()
+
+def get_conversation(project_id) -> dict:
+    result = None
+    if project_id is not None:
+        sql = text("SELECT messages, requirements FROM conversations WHERE project_id = :project_id")
+        with engine.connect() as connection:
+            result = connection.execute(sql, {"project_id": project_id}).mappings().first()
 
     if result:
         requirements = empty_requirements()
@@ -505,11 +578,11 @@ def get_conversation(user_id: str) -> dict:
     }
 
 
-def save_conversation(user_id: str, messages: list, requirements: dict):
+def save_conversation(user_id: str, project_id: int, messages: list, requirements: dict):
     sql = text("""
-        INSERT INTO conversations (user_id, messages, requirements, updated_at)
-        VALUES (:user_id, :messages, :requirements, CURRENT_TIMESTAMP)
-        ON CONFLICT (user_id)
+        INSERT INTO conversations (user_id, project_id, messages, requirements, updated_at)
+        VALUES (:user_id, :project_id, :messages, :requirements, CURRENT_TIMESTAMP)
+        ON CONFLICT (project_id)
         DO UPDATE SET
             messages = EXCLUDED.messages,
             requirements = EXCLUDED.requirements,
@@ -518,15 +591,19 @@ def save_conversation(user_id: str, messages: list, requirements: dict):
     with engine.begin() as connection:
         connection.execute(sql, {
             "user_id": user_id,
+            "project_id": project_id,
             "messages": json.dumps(messages),
             "requirements": json.dumps(requirements)
         })
+        touch_project(connection, project_id, requirements)
 
 
-def requirements_saved(user_id: str) -> bool:
-    sql = text("SELECT 1 FROM requirements WHERE user_id = :user_id")
+def requirements_saved(project_id) -> bool:
+    if project_id is None:
+        return False
+    sql = text("SELECT 1 FROM requirements WHERE project_id = :project_id")
     with engine.connect() as connection:
-        return connection.execute(sql, {"user_id": user_id}).first() is not None
+        return connection.execute(sql, {"project_id": project_id}).first() is not None
 
 
 def build_contents(messages: list) -> list:
@@ -535,6 +612,185 @@ def build_contents(messages: list) -> list:
         role = "model" if message["role"] == "assistant" else "user"
         contents.append(types.Content(role=role, parts=[types.Part.from_text(text=message["content"])]))
     return contents
+
+
+
+# ============================================================
+# SCHEMA (created / upgraded on startup)
+# ============================================================
+
+def _constraint(connection, table: str, kind: str, definition_contains: str):
+    """Name of a table's constraint of the given kind ('p' primary key, 'u' unique) matching a column."""
+    rows = connection.execute(
+        text("SELECT conname, pg_get_constraintdef(oid) FROM pg_constraint "
+             "WHERE conrelid = CAST(:table AS regclass) AND contype = :kind"),
+        {"table": table, "kind": kind}
+    ).fetchall()
+    for name, definition in rows:
+        if f"({definition_contains})" in definition:
+            return name
+    return None
+
+
+def migrate_schema():
+    """
+    Create Agent 1's tables if they are missing (fresh install) and upgrade older
+    databases in place. Safe to run on every start; existing data is kept.
+
+    Before "My rooms", conversations and requirements were one-per-user. Each user's
+    existing data becomes their first project.
+    """
+    with engine.begin() as connection:
+        run = lambda sql: connection.execute(text(sql))
+
+        run("""
+            CREATE TABLE IF NOT EXISTS users (
+                id SERIAL PRIMARY KEY,
+                username VARCHAR NOT NULL UNIQUE,
+                password_hash VARCHAR NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )""")
+        run("""
+            CREATE TABLE IF NOT EXISTS projects (
+                id SERIAL PRIMARY KEY,
+                user_id VARCHAR NOT NULL,
+                title VARCHAR NOT NULL DEFAULT 'New room',
+                status VARCHAR NOT NULL DEFAULT 'in_progress',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )""")
+        run("CREATE INDEX IF NOT EXISTS projects_user_id_idx ON projects (user_id)")
+        run("""
+            CREATE TABLE IF NOT EXISTS conversations (
+                project_id INTEGER PRIMARY KEY,
+                user_id VARCHAR NOT NULL,
+                messages JSONB NOT NULL DEFAULT '[]'::jsonb,
+                requirements JSONB,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )""")
+        run("""
+            CREATE TABLE IF NOT EXISTS requirements (
+                id SERIAL PRIMARY KEY,
+                user_id VARCHAR NOT NULL,
+                project_id INTEGER,
+                room_type VARCHAR,
+                style VARCHAR,
+                budget NUMERIC,
+                room_size VARCHAR,
+                must_haves TEXT,
+                color_preference VARCHAR,
+                details JSONB,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )""")
+
+        # --- upgrade databases created before projects existed ---
+        run("ALTER TABLE requirements ADD COLUMN IF NOT EXISTS details JSONB")
+        run("ALTER TABLE conversations ADD COLUMN IF NOT EXISTS project_id INTEGER")
+        run("ALTER TABLE requirements ADD COLUMN IF NOT EXISTS project_id INTEGER")
+        has_designs = connection.execute(text("SELECT to_regclass('designs') IS NOT NULL")).scalar()
+        if has_designs:
+            run("ALTER TABLE designs ADD COLUMN IF NOT EXISTS project_id INTEGER")
+
+        # Data saved before logins were enforced may carry ids of users that don't exist.
+        # Park it under an "orphan:<id>" owner nobody can log in as, so a future signup that
+        # happens to get the same id never inherits someone else's room.
+        for table in ["conversations", "requirements"] + (["designs"] if has_designs else []):
+            run(f"""
+                UPDATE {table} SET user_id = 'orphan:' || user_id
+                WHERE project_id IS NULL
+                  AND user_id NOT LIKE 'orphan:%'
+                  AND user_id NOT IN (SELECT CAST(id AS VARCHAR) FROM users)
+            """)
+
+        legacy_sources = ["SELECT user_id FROM conversations WHERE project_id IS NULL",
+                          "SELECT user_id FROM requirements WHERE project_id IS NULL"]
+        if has_designs:
+            legacy_sources.append("SELECT user_id FROM designs WHERE project_id IS NULL")
+        run(f"""
+            INSERT INTO projects (user_id, status)
+            SELECT u.user_id,
+                   CASE WHEN EXISTS (SELECT 1 FROM requirements r WHERE r.user_id = u.user_id)
+                        THEN 'complete' ELSE 'in_progress' END
+            FROM ({" UNION ".join(legacy_sources)}) u
+            WHERE NOT EXISTS (SELECT 1 FROM projects p WHERE p.user_id = u.user_id)
+        """)
+        for table in ["conversations", "requirements"] + (["designs"] if has_designs else []):
+            run(f"""
+                UPDATE {table} t
+                SET project_id = (SELECT MIN(p.id) FROM projects p WHERE p.user_id = t.user_id)
+                WHERE t.project_id IS NULL
+            """)
+
+        # One conversation / requirements row per PROJECT now, not per user
+        old_pk = _constraint(connection, "conversations", "p", "user_id")
+        if old_pk:
+            run(f'ALTER TABLE conversations DROP CONSTRAINT "{old_pk}"')
+            run("ALTER TABLE conversations ADD PRIMARY KEY (project_id)")
+        old_unique = _constraint(connection, "requirements", "u", "user_id")
+        if old_unique:
+            run(f'ALTER TABLE requirements DROP CONSTRAINT "{old_unique}"')
+        run("CREATE UNIQUE INDEX IF NOT EXISTS requirements_project_id_key ON requirements (project_id)")
+
+        # Give migrated projects a real title ("Bedroom · 12 x 10 ft")
+        untitled = connection.execute(text("""
+            SELECT p.id, r.room_type, r.room_size, c.requirements AS chat_requirements
+            FROM projects p
+            LEFT JOIN requirements r ON r.project_id = p.id
+            LEFT JOIN conversations c ON c.project_id = p.id
+            WHERE p.title = 'New room'
+        """)).mappings().all()
+        for row in untitled:
+            source = {"room_type": row["room_type"], "room_size": row["room_size"]}
+            if not source["room_type"] and row["chat_requirements"]:
+                source = row["chat_requirements"]
+            title = project_title(source)
+            if title != "New room":
+                connection.execute(text("UPDATE projects SET title = :title WHERE id = :id"),
+                                   {"title": title, "id": row["id"]})
+
+
+migrate_schema()
+
+
+# ============================================================
+# PROJECTS ("My rooms")
+# ============================================================
+
+@app.get("/projects/{user_id}")
+def list_projects(user_id: str, me: str = Depends(current_user)):
+    ensure_owner(me, user_id)
+    sql = text("""
+        SELECT p.id, p.title, p.status, p.created_at, p.updated_at,
+               r.room_type, r.budget, r.style
+        FROM projects p
+        LEFT JOIN requirements r ON r.project_id = p.id
+        WHERE p.user_id = :user_id
+        ORDER BY p.updated_at DESC, p.id DESC
+    """)
+    with engine.connect() as connection:
+        rows = connection.execute(sql, {"user_id": user_id}).mappings().all()
+    return {"user_id": user_id, "projects": [dict(r) for r in rows]}
+
+
+@app.post("/projects/{user_id}")
+def new_project(user_id: str, me: str = Depends(current_user)):
+    """Start a new room. Re-uses the latest room if nothing has been said in it yet."""
+    ensure_owner(me, user_id)
+    latest = latest_project_id(user_id)
+    if latest is not None and not get_conversation(latest)["messages"]:
+        return {"project_id": latest}
+    return {"project_id": create_project(user_id)}
+
+
+@app.delete("/projects/{project_id}")
+def delete_project(project_id: int, me: str = Depends(current_user)):
+    owned_project(project_id, me)
+    with engine.begin() as connection:
+        for table in ("conversations", "requirements"):
+            connection.execute(text(f"DELETE FROM {table} WHERE project_id = :id"), {"id": project_id})
+        connection.execute(text("DELETE FROM projects WHERE id = :id"), {"id": project_id})
+    return {"status": "deleted", "project_id": project_id}
 
 
 # ============================================================
@@ -546,18 +802,20 @@ def chat(payload: ChatMessage, me: str = Depends(current_user)):
 
     ensure_owner(me, payload.user_id)
     user_id = payload.user_id
+    project_id = resolve_project(user_id, payload.project_id, me, create=True)
     user_message = payload.message.strip()
 
     # Requirements are final once the design is generated. Changes go through the layout
     # (Agent 2's revise box); a different room needs a new chat. Don't re-open them here.
-    if requirements_saved(user_id):
+    if requirements_saved(project_id):
         return ChatResponse(
             reply=LOCKED_REPLY,
             requirements_complete=False,
-            requirements=get_conversation(user_id)["requirements"]
+            requirements=get_conversation(project_id)["requirements"],
+            project_id=project_id
         )
 
-    user_data = get_conversation(user_id)
+    user_data = get_conversation(project_id)
     user_data["messages"].append({
         "role": "user",
         "content": user_message
@@ -590,14 +848,16 @@ def chat(payload: ChatMessage, me: str = Depends(current_user)):
         return ChatResponse(
             reply="Our AI assistant is very busy right now. Please send your message again in a minute.",
             requirements_complete=False,
-            requirements=user_data["requirements"]
+            requirements=user_data["requirements"],
+            project_id=project_id
         )
     except Exception as e:
         print("GEMINI ERROR:", repr(e))
         return ChatResponse(
             reply="Sorry, something went wrong on my side. Please send that again.",
             requirements_complete=False,
-            requirements=user_data["requirements"]
+            requirements=user_data["requirements"],
+            project_id=project_id
         )
 
     requirements = normalize_requirements(turn.get("requirements") or {})
@@ -609,7 +869,7 @@ def chat(payload: ChatMessage, me: str = Depends(current_user)):
     widget = None
     if requirements_complete:
         reply = completion_summary(requirements)
-        save_requirements(user_id, requirements)
+        save_requirements(user_id, project_id, requirements)
     else:
         reply = (turn.get("reply") or "").strip()
         if not reply:
@@ -622,24 +882,27 @@ def chat(payload: ChatMessage, me: str = Depends(current_user)):
         assistant_message["widget"] = widget
     user_data["messages"].append(assistant_message)
 
-    save_conversation(user_id, user_data["messages"], requirements)
+    save_conversation(user_id, project_id, user_data["messages"], requirements)
 
     return ChatResponse(
         reply=reply,
         requirements_complete=requirements_complete,
         requirements=requirements,
-        widget=widget
+        widget=widget,
+        project_id=project_id
     )
 
 @app.get("/chat-history/{user_id}")
-def get_chat_history(user_id: str, me: str = Depends(current_user)):
+def get_chat_history(user_id: str, project_id: Optional[int] = None, me: str = Depends(current_user)):
     ensure_owner(me, user_id)
-    data = get_conversation(user_id)
+    project_id = resolve_project(user_id, project_id, me)
+    data = get_conversation(project_id)
     return {
         "user_id": user_id,
+        "project_id": project_id,
         "messages": data["messages"],
         "requirements": data["requirements"],
-        "requirements_complete": requirements_saved(user_id),
+        "requirements_complete": requirements_saved(project_id),
     }
 
 # ============================================================
@@ -650,9 +913,13 @@ def get_chat_history(user_id: str, me: str = Depends(current_user)):
 def update_requirements(
     user_id: str,
     updated_fields: dict,
+    project_id: Optional[int] = None,
     me: str = Depends(current_user)   # Agent 2 forwards the user's token
 ):
     ensure_owner(me, user_id)
+    project_id = resolve_project(user_id, project_id, me)
+    if project_id is None:
+        return {"status": "not_found", "user_id": user_id}
 
     allowed_fields = {
         "room_type",
@@ -677,15 +944,15 @@ def update_requirements(
         }
 
     # Keep the conversation's copy in sync so the chat agent sees the change
-    user_data = get_conversation(user_id)
+    user_data = get_conversation(project_id)
     user_data["requirements"].update(fields_to_update)
-    save_conversation(user_id, user_data["messages"], user_data["requirements"])
+    save_conversation(user_id, project_id, user_data["messages"], user_data["requirements"])
 
     # Prepare SQL update
     set_clauses = []
 
     parameters = {
-        "user_id": user_id
+        "project_id": project_id
     }
 
     for field, value in fields_to_update.items():
@@ -706,7 +973,7 @@ def update_requirements(
     sql = text(f"""
         UPDATE requirements
         SET {", ".join(set_clauses)}
-        WHERE user_id = :user_id
+        WHERE project_id = :project_id
     """)
 
     with engine.begin() as connection:
@@ -726,6 +993,7 @@ def update_requirements(
     return {
         "status": "updated",
         "user_id": user_id,
+        "project_id": project_id,
         "updated_fields": fields_to_update
     }
 
@@ -735,12 +1003,14 @@ def update_requirements(
 # ============================================================
 
 @app.get("/requirements/{user_id}")
-def get_requirements(user_id: str, me: str = Depends(current_user)):
+def get_requirements(user_id: str, project_id: Optional[int] = None, me: str = Depends(current_user)):
     ensure_owner(me, user_id)
+    project_id = resolve_project(user_id, project_id, me)
 
     sql = text("""
         SELECT
             user_id,
+            project_id,
             room_type,
             style,
             budget,
@@ -751,14 +1021,14 @@ def get_requirements(user_id: str, me: str = Depends(current_user)):
             created_at,
             updated_at
         FROM requirements
-        WHERE user_id = :user_id
+        WHERE project_id = :project_id
     """)
 
     with engine.connect() as connection:
 
         result = connection.execute(
             sql,
-            {"user_id": user_id}
+            {"project_id": project_id}
         ).mappings().first()
 
     if not result:
@@ -786,11 +1056,3 @@ def get_requirements(user_id: str, me: str = Depends(current_user)):
         "user_id": user_id,
         "requirements": requirements
     }
-
-@app.delete("/conversation/{user_id}")
-def delete_conversation(user_id: str, me: str = Depends(current_user)):
-    ensure_owner(me, user_id)
-    with engine.begin() as connection:
-        connection.execute(text("DELETE FROM conversations WHERE user_id = :user_id"), {"user_id": user_id})
-        connection.execute(text("DELETE FROM requirements WHERE user_id = :user_id"), {"user_id": user_id})
-    return {"status": "deleted", "user_id": user_id}

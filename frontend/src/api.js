@@ -45,15 +45,31 @@ export function login(username, password) {
   return postJSON(`${AGENT1_URL}/login`, { username, password })
 }
 
-export function getChatHistory(userId) {
-  return getJSON(`${AGENT1_URL}/chat-history/${userId}`)
+// "My rooms": each room (project) has its own chat, requirements and designs
+export function getProjects(userId) {
+  return getJSON(`${AGENT1_URL}/projects/${userId}`)
+}
+
+export function createProject(userId) {
+  return postJSON(`${AGENT1_URL}/projects/${userId}`, {})
+}
+
+export function deleteProject(projectId) {
+  return request(`${AGENT1_URL}/projects/${projectId}`, { method: 'DELETE' })
+}
+
+const withProject = projectId => (projectId ? `?project_id=${encodeURIComponent(projectId)}` : '')
+
+export function getChatHistory(userId, projectId) {
+  return getJSON(`${AGENT1_URL}/chat-history/${userId}${withProject(projectId)}`)
 }
 
 // Agent 1 — Requirement Gathering
 // openings: exact door/window picks from the room picker (optional)
-export function sendChatMessage(userId, message, openings = null) {
+export function sendChatMessage(userId, message, openings = null, projectId = null) {
   const body = { user_id: userId, message }
   if (openings) body.openings = openings
+  if (projectId) body.project_id = projectId
   return postJSON(`${AGENT1_URL}/chat`, body)
 }
 
@@ -66,16 +82,17 @@ export function generateDesign(requirements) {
   return postJSON(`${AGENT2_URL}/generate-design`, requirements)
 }
 
-export function reviseDesign(userId, originalRequirements, changeText) {
+export function reviseDesign(userId, originalRequirements, changeText, projectId = null) {
   return postJSON(`${AGENT2_URL}/revise-design`, {
     user_id: userId,
+    project_id: projectId,
     original_requirements: originalRequirements,
     change_text: changeText
   })
 }
 
-export function getDesignHistory(userId) {
-  return getJSON(`${AGENT2_URL}/design-history/${userId}`)
+export function getDesignHistory(userId, projectId) {
+  return getJSON(`${AGENT2_URL}/design-history/${userId}${withProject(projectId)}`)
 }
 
 // Agent 3 — Furniture Search
@@ -96,10 +113,6 @@ export function optimizeBudget(products, budget, preferences) {
   return postJSON(`${AGENT4_URL}/optimize-budget`, { products, budget, preferences })
 }
 
-export function deleteConversation(userId) {
-  return request(`${AGENT1_URL}/conversation/${userId}`, { method: 'DELETE' })
-}
-
-export function deleteDesigns(userId) {
-  return request(`${AGENT2_URL}/design-history/${userId}`, { method: 'DELETE' })
+export function deleteDesigns(userId, projectId) {
+  return request(`${AGENT2_URL}/design-history/${userId}${withProject(projectId)}`, { method: 'DELETE' })
 }
