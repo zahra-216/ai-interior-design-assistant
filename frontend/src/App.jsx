@@ -156,7 +156,9 @@ export default function App() {
       const res = await getChatHistory(userId, current)
 
       if (res.messages && res.messages.length > 0) {
-        setInitialMessages(res.messages.map(m => ({ role: m.role, content: m.content, widget: m.widget })))
+        setInitialMessages(res.messages.map(m => ({
+          role: m.role, content: m.content, widget: m.widget, suggestions: m.suggestions
+        })))
       } else {
         setInitialMessages(null)
       }

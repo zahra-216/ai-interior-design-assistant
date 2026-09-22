@@ -23,6 +23,9 @@ from fastapi.middleware.cors import CORSMiddleware
 
 import os
 import json
+import time
+
+import httpx
 
 from gemini_client import generate_json, GeminiUnavailableError
 from auth import create_token, current_user, ensure_owner
@@ -88,6 +91,8 @@ class ChatResponse(BaseModel):
     # "openings" when the reply asks where the door/windows are, so the UI can show the picker
     widget: Optional[str] = None
     project_id: Optional[int] = None
+    # Suggestion chips: {"kind": "style", "mode": "single" | "multi", "options": [...]}
+    suggestions: Optional[dict] = None
 
 class SignupRequest(BaseModel):
     username: str
@@ -163,6 +168,10 @@ class TurnOutput(BaseModel):
     ready: bool = Field(description="True only when all required fields are filled and nothing else needs asking")
     reply: str = Field(description="Your next message to the user. Never ask for anything already in requirements")
     asks_about_openings: bool = Field(description="True if your reply asks where the door or windows are")
+    asking_for: str = Field(description=(
+        "What your reply asks the user for: 'room_type', 'style', 'budget', 'room_size', 'furniture', "
+        "'color_preference', 'openings', or 'other' / 'none'"
+    ))
 
 
 # ============================================================
@@ -296,6 +305,10 @@ Conversation rules:
     updated requirements. Only remove an item or placement if the user asked to.
   - Set ready=true only when every required field is filled and you have asked
     about the door/window. When ready, keep the reply to one short friendly line.
+  - If you were told we don't sell an item and the user wants to keep it anyway, keep it
+    and add "not buying" to its notes. If they want it left out, remove it.
+  - If the user clarifies what colours they meant, replace color_preference with their
+    clarified colours (e.g. "sunset vibes" -> "warm orange and pink").
 """
 
 REQUIRED_FIELDS = ["room_type", "style", "budget", "room_size", "must_haves", "color_preference"]
@@ -320,6 +333,8 @@ def empty_requirements() -> dict:
         "placements": [],
         "openings": [],
         "other_notes": [],
+        # items / colour we've already asked about (see check_terms), so we ask only once
+        "checks": {"asked_items": [], "asked_color": ""},
     }
 
 
@@ -420,6 +435,141 @@ def completion_summary(requirements: dict) -> str:
     lines.append("Generating your layout now. For small changes, use the box under the layout. "
                  "For a different room, start a New chat.")
     return "\n".join(line for line in lines if line)
+
+
+# ============================================================
+# SUGGESTION CHIPS + INPUT CHECKS
+# ============================================================
+#
+# Each turn Gemini says what it is asking about (asking_for). We return matching
+# suggestion chips, and check the user's items and colours with Agent 3 (REST):
+# things we can't sell, or colours we can't understand, are raised straight away.
+
+AGENT3_URL = os.getenv("AGENT3_URL", "http://127.0.0.1:8003")
+
+SINGLE_CHOICE_CHIPS = {
+    "room_type": ["Bedroom", "Living room", "Dining room", "Study / home office", "Kids room"],
+    "style": ["Modern", "Minimalist", "Scandinavian", "Classic", "Industrial", "Boho"],
+    "budget": ["1 lakh", "2 lakhs", "3 lakhs", "5 lakhs"],
+    "room_size": ["10 x 10 ft", "12 x 10 ft", "12 x 12 ft", "14 x 12 ft"],
+}
+COLOR_CHIPS = [
+    "Navy blue and white", "Grey and white", "White and light wood", "Beige and cream",
+    "Sage green and beige", "Pastel colours", "Black and white", "Warm wood tones",
+]
+# (chip label, Agent 3 category) per kind of room; only categories with products are shown
+ROOM_FURNITURE_CHIPS = {
+    "bedroom": [("Queen bed", "bed"), ("Wardrobe", "wardrobe"), ("Bedside tables", "bedside table"),
+                ("Dressing table", "dressing table"), ("Study desk", "study desk"), ("Mirror", "mirror"),
+                ("Small cupboard", "cabinet"), ("Rug", "rug"), ("Curtains", "curtain")],
+    "living": [("Sofa", "sofa"), ("Coffee table", "coffee table"), ("TV stand", "tv stand"),
+               ("Armchair", "armchair"), ("Side table", "side table"), ("Bookshelf", "bookshelf"),
+               ("Wall shelves", "wall shelf"), ("Rug", "rug"), ("Sideboard", "sideboard")],
+    "dining": [("Dining table", "dining table"), ("Dining chairs", "dining chair"), ("Sideboard", "sideboard"),
+               ("Mirror", "mirror"), ("Rug", "rug")],
+    "study": [("Study desk", "study desk"), ("Office chair", "office chair"), ("Bookshelf", "bookshelf"),
+              ("Small cupboard", "cabinet"), ("Wall shelves", "wall shelf")],
+    "kids": [("Single bed", "bed"), ("Study desk", "study desk"), ("Wardrobe", "wardrobe"),
+             ("Bookshelf", "bookshelf"), ("Rug", "rug")],
+}
+
+_vocabulary_cache = {"at": 0.0, "categories": None}
+
+
+def catalog_categories():
+    """Categories Agent 3 has products for (cached 5 minutes). None if Agent 3 is unreachable."""
+    if time.time() - _vocabulary_cache["at"] < 300 and _vocabulary_cache["categories"] is not None:
+        return _vocabulary_cache["categories"]
+    try:
+        response = httpx.get(f"{AGENT3_URL}/vocabulary", timeout=4)
+        response.raise_for_status()
+        _vocabulary_cache.update(at=time.time(), categories=set(response.json()["categories"]))
+    except Exception as e:
+        print("Agent 3 vocabulary unavailable:", repr(e))
+        return None
+    return _vocabulary_cache["categories"]
+
+
+def understand_terms(items: list, color: str):
+    """Ask Agent 3 whether it can sell these items and understand this colour. None if unreachable."""
+    try:
+        response = httpx.post(f"{AGENT3_URL}/understand", json={"items": items, "color": color}, timeout=4)
+        response.raise_for_status()
+        return response.json()
+    except Exception as e:
+        print("Agent 3 check unavailable:", repr(e))
+        return None
+
+
+def _join(words: list) -> str:
+    def article(w):
+        if w.endswith("s"):
+            return w  # "curtains", "shelves"
+        return ("an " if w[:1].lower() in "aeiou" else "a ") + w
+    quoted = [article(w) for w in words]
+    return quoted[0] if len(quoted) == 1 else ", ".join(quoted[:-1]) + " or " + quoted[-1]
+
+
+def check_terms(requirements: dict):
+    """
+    A clarification question if the user asked for things we don't sell or colours we
+    can't interpret (each asked once), plus colour chips when useful. (None, None) if all fine.
+    """
+    checks = requirements["checks"]
+    names = [f["name"] for f in requirements.get("furniture") or []]
+    color = (requirements.get("color_preference") or "").strip()
+    if not names and not color:
+        return None, None
+    info = understand_terms(names, color)
+    if info is None:
+        return None, None  # Agent 3 is down: carry on without the checks
+
+    asked = {a.lower() for a in checks.get("asked_items", [])}
+    unknown = [i["name"] for i in info["items"] if not i["in_catalog"] and i["name"].lower() not in asked]
+    unclear_color = bool(color) and not info["color_understood"] and checks.get("asked_color") != color
+
+    parts, suggestions = [], None
+    if unknown:
+        them = "it" if len(unknown) == 1 else "them"
+        parts.append(
+            f"Just so you know, we don't have {_join(unknown)} in our product catalog, so I can't suggest one "
+            f"to buy. Should I still leave space for {them} in the layout (for example if you already own "
+            f"{them}), or leave {them} out?"
+        )
+        checks["asked_items"] = checks.get("asked_items", []) + unknown
+    if unclear_color:
+        parts.append(f"I want to get the colours right: which colours do you mean by \"{color}\"? "
+                     "Pick one below or describe them in your own words.")
+        checks["asked_color"] = color
+        suggestions = {"kind": "colors", "mode": "single", "options": COLOR_CHIPS}
+    return (" ".join(parts) or None), suggestions
+
+
+def room_kind(requirements: dict) -> str:
+    room = (requirements.get("room_type") or "").lower()
+    if (requirements.get("occupant") or "adult") in ("child", "baby") or "kid" in room or "nursery" in room:
+        return "kids"
+    for words, kind in ((("living", "lounge", "sitting", "family"), "living"), (("dining",), "dining"),
+                        (("study", "office", "work"), "study"), (("bed",), "bedroom")):
+        if any(w in room for w in words):
+            return kind
+    return "bedroom"
+
+
+def build_suggestions(asking_for: str, requirements: dict):
+    """Suggestion chips for whatever Agent 1 is asking about this turn (or None)."""
+    asking_for = (asking_for or "").strip().lower()
+    if asking_for in SINGLE_CHOICE_CHIPS:
+        return {"kind": asking_for, "mode": "single", "options": SINGLE_CHOICE_CHIPS[asking_for]}
+    if asking_for == "color_preference":
+        return {"kind": "colors", "mode": "single", "options": COLOR_CHIPS}
+    if asking_for == "furniture":
+        sellable = catalog_categories()
+        have = " ".join(f["name"].lower() for f in requirements.get("furniture") or [])
+        options = [label for label, category in ROOM_FURNITURE_CHIPS[room_kind(requirements)]
+                   if (sellable is None or category in sellable) and label.lower().rstrip("s") not in have]
+        return {"kind": "furniture", "mode": "multi", "options": options} if options else None
+    return None
 
 
 # ============================================================
@@ -863,23 +1013,36 @@ def chat(payload: ChatMessage, me: str = Depends(current_user)):
     requirements = normalize_requirements(turn.get("requirements") or {})
     if picked_openings:
         requirements["openings"] = picked_openings
+    previous_checks = user_data["requirements"].get("checks") or {}
+    requirements["checks"] = {"asked_items": list(previous_checks.get("asked_items", [])),
+                              "asked_color": previous_checks.get("asked_color", "")}
+    # Things we can't sell / colours we can't read: ask now, before the design is made
+    clarification, clarify_suggestions = check_terms(requirements)
     missing = missing_fields(requirements)
-    requirements_complete = not missing and bool(turn.get("ready"))
+    requirements_complete = not missing and bool(turn.get("ready")) and not clarification
 
     widget = None
+    suggestions = None
     if requirements_complete:
         reply = completion_summary(requirements)
         save_requirements(user_id, project_id, requirements)
+    elif clarification:
+        reply = clarification
+        suggestions = clarify_suggestions
     else:
         reply = (turn.get("reply") or "").strip()
         if not reply:
             reply = f"Could you tell me your {missing[0].replace('_', ' ')}?" if missing else "Anything else?"
         if turn.get("asks_about_openings") and payload.openings is None:
             widget = "openings"
+        else:
+            suggestions = build_suggestions(turn.get("asking_for"), requirements)
 
     assistant_message = {"role": "assistant", "content": reply}
     if widget:
         assistant_message["widget"] = widget
+    if suggestions:
+        assistant_message["suggestions"] = suggestions
     user_data["messages"].append(assistant_message)
 
     save_conversation(user_id, project_id, user_data["messages"], requirements)
@@ -889,7 +1052,8 @@ def chat(payload: ChatMessage, me: str = Depends(current_user)):
         requirements_complete=requirements_complete,
         requirements=requirements,
         widget=widget,
-        project_id=project_id
+        project_id=project_id,
+        suggestions=suggestions
     )
 
 @app.get("/chat-history/{user_id}")

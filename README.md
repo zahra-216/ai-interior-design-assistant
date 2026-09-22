@@ -141,6 +141,12 @@ several models when one is busy (503) or out of quota (429). Override the order 
 no tall furniture in front of windows, walkway to every piece). If Gemini is down, a
 layout is still produced from the built-in size catalog.
 
+**Agent 1 -> Agent 3 (while chatting):** Agent 1 calls `GET /vocabulary` (furniture categories
+the catalog sells) and `POST /understand` (`{"items": [...], "color": "..."}` -> which items can be
+sold, which colour families were understood). This drives the suggestion chips and lets Agent 1 ask
+straight away about things we don't sell ("piano") or colours it can't read ("sunset vibes"). If Agent 3
+is down, the chat carries on without these checks.
+
 **Agent 2 -> Agent 3:**
 ```json
 {

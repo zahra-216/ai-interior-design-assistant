@@ -11,8 +11,9 @@ from pydantic import BaseModel
 from typing import List, Optional
 from sqlalchemy.orm import Session
 
-from database import get_db, init_db
+from database import get_db, init_db, Product
 from search_logic import Catalog, search_and_rank
+from product_knowledge import RELATED_CATEGORIES, parse_colors, resolve_category
 from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI(title="Agent 3 - Furniture Search")
@@ -78,6 +79,52 @@ class MatchedProduct(BaseModel):
 @app.get("/health")
 def health_check():
     return {"status": "Agent 3 is running"}
+
+
+# ============================================================
+# VOCABULARY - lets Agent 1 check the user's words while chatting
+# ============================================================
+
+def available_categories(db) -> dict:
+    """Canonical category -> number of products in the catalog."""
+    counts = {}
+    for (raw,) in db.query(Product.category).all():
+        category = resolve_category(raw) or (raw or "").lower()
+        counts[category] = counts.get(category, 0) + 1
+    return counts
+
+
+class UnderstandRequest(BaseModel):
+    items: List[str] = []
+    color: Optional[str] = None
+
+
+@app.get("/vocabulary")
+def vocabulary(db: Session = Depends(get_db)):
+    """Furniture categories we can actually sell (with product counts)."""
+    return {"categories": available_categories(db)}
+
+
+@app.post("/understand")
+def understand(payload: UnderstandRequest, db: Session = Depends(get_db)):
+    """
+    For each item: which category it is and whether we can suggest a product for it
+    (directly or via a related category). For the colour text: the colour families found.
+    """
+    available = available_categories(db)
+    items = []
+    for name in payload.items:
+        category = resolve_category(name)
+        sellable = bool(category) and (
+            category in available or any(r in available for r in RELATED_CATEGORIES.get(category, []))
+        )
+        items.append({"name": name, "category": category, "in_catalog": sellable})
+    colors = parse_colors(payload.color or "")
+    return {
+        "items": items,
+        "color_families": [f"{shade} {family}".strip() for family, shade in colors],
+        "color_understood": bool(colors),
+    }
 
 
 @app.post("/search-furniture", response_model=List[MatchedProduct])
