@@ -6,7 +6,7 @@ import FurnitureSchedule from './components/FurnitureSchedule'
 import CostSummary from './components/CostSummary'
 import {
   generateDesign, reviseDesign, searchFurniture, estimateCost, optimizeBudget,
-  getChatHistory, getDesignHistory, deleteConversation, deleteDesigns
+  getChatHistory, getDesignHistory, deleteConversation, deleteDesigns, setAuth
 } from './api'
 import './App.css'
 
@@ -56,8 +56,30 @@ function applySwaps(products, swaps) {
   })
 }
 
+// Logged-in session: { userId, username, token, expiresAt }. Expired sessions are dropped,
+// and so is the old format (a bare 'userId' with no token), which forces a proper login.
+const SESSION_KEY = 'session'
+
+function loadSession() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(SESSION_KEY))
+    if (saved?.token && saved.expiresAt * 1000 > Date.now()) return saved
+  } catch { /* corrupt or unavailable storage */ }
+  try {
+    localStorage.removeItem(SESSION_KEY)
+    localStorage.removeItem('userId')
+  } catch { /* ignore */ }
+  return null
+}
+
 export default function App() {
-  const [userId, setUserId] = useState(() => localStorage.getItem('userId') || null)
+  const [session, setSession] = useState(() => {
+    const saved = loadSession()
+    setAuth(saved?.token)
+    return saved
+  })
+  const [loginNotice, setLoginNotice] = useState(null)
+  const userId = session?.userId || null
   const [chatKey, setChatKey] = useState(0)
   const [initialMessages, setInitialMessages] = useState(null)
   const [requirements, setRequirements] = useState(null)
@@ -74,13 +96,17 @@ export default function App() {
   const [error, setError] = useState(null)
 
   useEffect(() => {
-    if (!userId) {
+    if (!session) {
       setRestoring(false)
       return
     }
-    localStorage.setItem('userId', userId)
+    setAuth(session.token, () => handleLogout('Your session has expired. Please log in again.'))
     restoreSession()
-  }, [userId, chatKey])
+    // Log out when the token expires, even if the tab stays open
+    const timer = setTimeout(() => handleLogout('Your session has expired. Please log in again.'),
+      Math.max(0, session.expiresAt * 1000 - Date.now()))
+    return () => clearTimeout(timer)
+  }, [session, chatKey])
 
   async function restoreSession() {
     setRestoring(true)
@@ -124,8 +150,34 @@ export default function App() {
     }
   }
 
-  function handleAuth(id) {
-    setUserId(id)
+  function handleAuth(res) {
+    const next = { userId: res.user_id, username: res.username, token: res.token, expiresAt: res.expires_at }
+    try {
+      localStorage.setItem(SESSION_KEY, JSON.stringify(next))
+    } catch { /* storage unavailable: login lasts until the tab closes */ }
+    setAuth(next.token)
+    setLoginNotice(null)
+    setSession(next)
+  }
+
+  function resetWorkspace() {
+    setInitialMessages(null)
+    setRequirements(null)
+    setDesign(null)
+    setProducts(null)
+    setCost(null)
+    setProposal(null)
+    setError(null)
+  }
+
+  function handleLogout(notice = null) {
+    try {
+      localStorage.removeItem(SESSION_KEY)
+    } catch { /* ignore */ }
+    setAuth(null)
+    resetWorkspace()
+    setLoginNotice(notice)
+    setSession(null)
   }
 
   async function handleNewChat() {
@@ -136,18 +188,12 @@ export default function App() {
     } catch (err) {
       console.error('Could not clear previous session', err)
     }
-    setInitialMessages(null)
-    setRequirements(null)
-    setDesign(null)
-    setProducts(null)
-    setCost(null)
-    setProposal(null)
-    setError(null)
+    resetWorkspace()
     setChatKey(k => k + 1)
   }
 
-  if (!userId) {
-    return <LoginScreen onAuth={handleAuth} />
+  if (!session) {
+    return <LoginScreen onAuth={handleAuth} notice={loginNotice} />
   }
 
   async function handleRequirementsComplete(reqs) {
@@ -272,6 +318,10 @@ export default function App() {
         <span className="app__tagline">AI interior design, made for Sri Lankan homes</span>
         <button className="btn-secondary app__new-chat" onClick={handleNewChat}>
           New chat
+        </button>
+        <span className="app__user">{session.username}</span>
+        <button className="btn-secondary app__logout" onClick={() => handleLogout()}>
+          Log out
         </button>
       </header>
 

@@ -11,7 +11,7 @@ import re
 import json
 import requests
 import uuid
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends, Header
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, field_validator
 from typing import List, Optional
@@ -25,6 +25,7 @@ from design_generator import (
     revise_furniture_layout,
 )
 from gemini_client import GeminiUnavailableError
+from auth import current_user, ensure_owner
 
 load_dotenv()
 DATABASE_URL = os.getenv("DATABASE_URL")
@@ -171,7 +172,8 @@ def health_check():
 
 
 @app.post("/generate-design", response_model=DesignResponse)
-def generate_design(requirements: Requirements):
+def generate_design(requirements: Requirements, me: str = Depends(current_user)):
+    ensure_owner(me, requirements.user_id)
     layout_data = get_furniture_layout(requirements.model_dump())
     image_path = draw_layout(
         layout_data,
@@ -191,7 +193,9 @@ def generate_design(requirements: Requirements):
 
 
 @app.post("/revise-design", response_model=DesignResponse)
-def revise_design(change: ChangeRequest):
+def revise_design(change: ChangeRequest, me: str = Depends(current_user),
+                  authorization: str = Header(default="")):
+    ensure_owner(me, change.user_id)
     requirements = change.original_requirements.model_dump()
     try:
         layout_data, updated_fields = revise_furniture_layout(
@@ -211,6 +215,7 @@ def revise_design(change: ChangeRequest):
             requests.post(
                 f"{AGENT1_URL}/requirements/{change.user_id}/update",
                 json=updated_fields,
+                headers={"Authorization": authorization},  # act as the logged-in user
                 timeout=5
             )
         except requests.exceptions.RequestException:
@@ -232,7 +237,8 @@ def revise_design(change: ChangeRequest):
 # NOTE: not under /designs/..., which is where the layout images are served from
 # (the static mount would swallow these routes).
 @app.get("/design-history/{user_id}")
-def get_designs(user_id: str):
+def get_designs(user_id: str, me: str = Depends(current_user)):
+    ensure_owner(me, user_id)
     sql = text("""
         SELECT id, requirements, layout_data, image_path, created_at
         FROM designs
@@ -256,7 +262,8 @@ def get_designs(user_id: str):
 # }
 
 @app.delete("/design-history/{user_id}")
-def delete_designs(user_id: str):
+def delete_designs(user_id: str, me: str = Depends(current_user)):
+    ensure_owner(me, user_id)
     sql = text("DELETE FROM designs WHERE user_id = :user_id")
     with engine.begin() as connection:
         connection.execute(sql, {"user_id": user_id})

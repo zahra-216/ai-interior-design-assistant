@@ -39,6 +39,14 @@
   outline: none;
 }
 
+.login-screen__notice {
+  color: var(--ink-soft);
+  font-size: var(--text-sm);
+  background: var(--stone-soft);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+}
+
 .login-screen__error {
   color: var(--danger);
   font-size: var(--text-sm);

@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { signup, login } from '../api'
 import './LoginScreen.css'
 
-export default function LoginScreen({ onAuth }) {
+export default function LoginScreen({ onAuth, notice }) {
   const [mode, setMode] = useState('login')
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
@@ -17,7 +17,7 @@ export default function LoginScreen({ onAuth }) {
       const res = mode === 'login'
         ? await login(username, password)
         : await signup(username, password)
-      onAuth(res.user_id)
+      onAuth(res)
     } catch (err) {
       setError(mode === 'login' ? 'Invalid username or password.' : 'Could not create account — username may be taken.')
     } finally {
@@ -46,6 +46,7 @@ export default function LoginScreen({ onAuth }) {
           required
         />
 
+        {notice && !error && <p className="login-screen__notice">{notice}</p>}
         {error && <p className="login-screen__error">{error}</p>}
 
         <button className="btn" type="submit" disabled={loading}>

@@ -3,27 +3,39 @@ const AGENT2_URL = 'http://127.0.0.1:8002'
 const AGENT3_URL = 'http://127.0.0.1:8003'
 const AGENT4_URL = 'http://127.0.0.1:8004'
 
-async function postJSON(url, body) {
+// Login token from Agent 1. Agents 1 and 2 hold user data, so they need it.
+let authToken = null
+let onUnauthorized = () => {}
+
+export function setAuth(token, handleUnauthorized) {
+  authToken = token || null
+  if (handleUnauthorized) onUnauthorized = handleUnauthorized
+}
+
+const needsAuth = url => url.startsWith(AGENT1_URL) || url.startsWith(AGENT2_URL)
+
+async function request(url, { method = 'GET', body } = {}) {
+  const headers = {}
+  if (body !== undefined) headers['Content-Type'] = 'application/json'
+  if (authToken && needsAuth(url)) headers.Authorization = `Bearer ${authToken}`
+
   const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body)
+    method,
+    headers,
+    body: body !== undefined ? JSON.stringify(body) : undefined
   })
   if (!res.ok) {
     const detail = await res.text()
+    if (res.status === 401 && authToken && needsAuth(url)) {
+      onUnauthorized()  // expired or invalid session: back to the login screen
+    }
     throw new Error(`Request failed (${res.status}): ${detail}`)
   }
   return res.json()
 }
 
-async function getJSON(url) {
-  const res = await fetch(url)
-  if (!res.ok) {
-    const detail = await res.text()
-    throw new Error(`Request failed (${res.status}): ${detail}`)
-  }
-  return res.json()
-}
+const postJSON = (url, body) => request(url, { method: 'POST', body })
+const getJSON = url => request(url)
 
 export function signup(username, password) {
   return postJSON(`${AGENT1_URL}/signup`, { username, password })
@@ -85,9 +97,9 @@ export function optimizeBudget(products, budget, preferences) {
 }
 
 export function deleteConversation(userId) {
-  return fetch(`${AGENT1_URL}/conversation/${userId}`, { method: 'DELETE' }).then(r => r.json())
+  return request(`${AGENT1_URL}/conversation/${userId}`, { method: 'DELETE' })
 }
 
 export function deleteDesigns(userId) {
-  return fetch(`${AGENT2_URL}/design-history/${userId}`, { method: 'DELETE' }).then(r => r.json())
+  return request(`${AGENT2_URL}/design-history/${userId}`, { method: 'DELETE' })
 }

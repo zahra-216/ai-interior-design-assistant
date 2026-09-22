@@ -12,7 +12,7 @@ Run:
 uvicorn main:app --reload --port 8001
 """
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends
 from pydantic import BaseModel, Field
 from typing import List, Optional
 from dotenv import load_dotenv
@@ -25,6 +25,7 @@ import os
 import json
 
 from gemini_client import generate_json, GeminiUnavailableError
+from auth import create_token, current_user, ensure_owner
 
 # ============================================================
 # ENVIRONMENT CONFIGURATION
@@ -101,6 +102,8 @@ class LoginRequest(BaseModel):
 class AuthResponse(BaseModel):
     user_id: str
     username: str
+    token: str          # send as "Authorization: Bearer <token>" to Agents 1 and 2
+    expires_at: int     # unix seconds; log in again after this
 
 
 # ============================================================
@@ -205,7 +208,8 @@ def signup(payload: SignupRequest):
     except Exception:
         raise HTTPException(status_code=409, detail="Username already taken")
 
-    return AuthResponse(user_id=str(user_id), username=username)
+    token, expires_at = create_token(user_id)
+    return AuthResponse(user_id=str(user_id), username=username, token=token, expires_at=expires_at)
 
 
 # ============================================================
@@ -225,7 +229,8 @@ def login(payload: LoginRequest):
     if not result or not bcrypt.verify(password, result["password_hash"]):
         raise HTTPException(status_code=401, detail="Invalid username or password")
 
-    return AuthResponse(user_id=str(result["id"]), username=username)
+    token, expires_at = create_token(result["id"])
+    return AuthResponse(user_id=str(result["id"]), username=username, token=token, expires_at=expires_at)
 
 # ============================================================
 # GEMINI SYSTEM PROMPT
@@ -537,8 +542,9 @@ def build_contents(messages: list) -> list:
 # ============================================================
 
 @app.post("/chat", response_model=ChatResponse)
-def chat(payload: ChatMessage):
+def chat(payload: ChatMessage, me: str = Depends(current_user)):
 
+    ensure_owner(me, payload.user_id)
     user_id = payload.user_id
     user_message = payload.message.strip()
 
@@ -626,7 +632,8 @@ def chat(payload: ChatMessage):
     )
 
 @app.get("/chat-history/{user_id}")
-def get_chat_history(user_id: str):
+def get_chat_history(user_id: str, me: str = Depends(current_user)):
+    ensure_owner(me, user_id)
     data = get_conversation(user_id)
     return {
         "user_id": user_id,
@@ -642,8 +649,10 @@ def get_chat_history(user_id: str):
 @app.post("/requirements/{user_id}/update")
 def update_requirements(
     user_id: str,
-    updated_fields: dict
+    updated_fields: dict,
+    me: str = Depends(current_user)   # Agent 2 forwards the user's token
 ):
+    ensure_owner(me, user_id)
 
     allowed_fields = {
         "room_type",
@@ -726,7 +735,8 @@ def update_requirements(
 # ============================================================
 
 @app.get("/requirements/{user_id}")
-def get_requirements(user_id: str):
+def get_requirements(user_id: str, me: str = Depends(current_user)):
+    ensure_owner(me, user_id)
 
     sql = text("""
         SELECT
@@ -778,7 +788,8 @@ def get_requirements(user_id: str):
     }
 
 @app.delete("/conversation/{user_id}")
-def delete_conversation(user_id: str):
+def delete_conversation(user_id: str, me: str = Depends(current_user)):
+    ensure_owner(me, user_id)
     with engine.begin() as connection:
         connection.execute(text("DELETE FROM conversations WHERE user_id = :user_id"), {"user_id": user_id})
         connection.execute(text("DELETE FROM requirements WHERE user_id = :user_id"), {"user_id": user_id})

@@ -42,6 +42,19 @@ Repeat for agent2 (port 8002), agent3 (port 8003), agent4 (port 8004).
 Each agent needs a `.env` file for secrets (Gemini API key, DB connection string) —
 create `.env` in each agent folder, never commit it (already in `.gitignore`).
 
+## Login and security
+
+Agent 1 issues a signed login token at `/signup` and `/login` (HMAC-SHA256, valid 7 days).
+The frontend sends it as `Authorization: Bearer <token>` to Agents 1 and 2, which take the user
+from the token and refuse other users' data (401 = not logged in / expired, 403 = not yours).
+Agent 2 forwards the token when it syncs requirement changes to Agent 1. Agents 3 and 4 hold no
+user data and stay open. Both `agent1-requirements/.env` and `agent2-design/.env` need the same:
+
+```
+AUTH_SECRET=<long random string>
+AUTH_TOKEN_TTL_HOURS=168
+```
+
 ## JSON Contracts Between Agents
 
 **Agent 1 -> Agent 2:**
