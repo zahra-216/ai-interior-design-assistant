@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import LoginScreen from './components/LoginScreen'
 import ChatPanel from './components/ChatPanel'
 import FloorPlanPanel from './components/FloorPlanPanel'
@@ -99,6 +99,8 @@ export default function App() {
   const [loginNotice, setLoginNotice] = useState(null)
   const userId = session?.userId || null
   const [projectId, setProjectId] = useState(null)
+  // Set by a real login/signup: open a fresh room. A page refresh reopens the last room instead.
+  const startFresh = useRef(false)
   const [projects, setProjects] = useState([])
   const [chatKey, setChatKey] = useState(0)
   const [initialMessages, setInitialMessages] = useState(null)
@@ -146,7 +148,12 @@ export default function App() {
       const list = await refreshProjects() || []
       let current = storedProject(userId)
       if (!list.some(p => p.id === current)) current = list[0]?.id ?? null
-      if (current === null) {
+      if (startFresh.current) {
+        // New chat after logging in (the backend re-uses an empty room instead of adding another)
+        startFresh.current = false
+        current = (await createProject(userId)).project_id
+        await refreshProjects()
+      } else if (current === null) {
         current = (await createProject(userId)).project_id
         await refreshProjects()
       }
@@ -201,6 +208,7 @@ export default function App() {
     } catch { /* storage unavailable: login lasts until the tab closes */ }
     setAuth(next.token)
     setLoginNotice(null)
+    startFresh.current = true
     setSession(next)
   }
 

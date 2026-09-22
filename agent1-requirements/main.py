@@ -1061,13 +1061,50 @@ def get_chat_history(user_id: str, project_id: Optional[int] = None, me: str = D
     ensure_owner(me, user_id)
     project_id = resolve_project(user_id, project_id, me)
     data = get_conversation(project_id)
+    complete = requirements_saved(project_id)
+    messages, requirements = data["messages"], data["requirements"]
+
+    if complete and not messages:
+        # A room saved before chats were stored: rebuild from the final requirements row
+        # and show the summary, so the room still opens with its budget, style and items.
+        requirements = load_saved_requirements(project_id) or requirements
+        messages = [{"role": "assistant", "content": completion_summary(requirements)
+                     .replace("Generating your layout now. ", "")}]
+
     return {
         "user_id": user_id,
         "project_id": project_id,
-        "messages": data["messages"],
-        "requirements": data["requirements"],
-        "requirements_complete": requirements_saved(project_id),
+        "messages": messages,
+        "requirements": requirements,
+        "requirements_complete": complete,
     }
+
+
+def load_saved_requirements(project_id):
+    """The final requirements row for a project, in the same shape the chat produces."""
+    with engine.connect() as connection:
+        row = connection.execute(
+            text("""SELECT room_type, style, budget, room_size, must_haves, color_preference, details
+                    FROM requirements WHERE project_id = :project_id"""),
+            {"project_id": project_id}
+        ).mappings().first()
+    if not row:
+        return None
+    requirements = empty_requirements()
+    for key in ("room_type", "style", "room_size", "color_preference"):
+        requirements[key] = row[key]
+    requirements["budget"] = float(row["budget"]) if row["budget"] is not None else None
+    try:
+        requirements["must_haves"] = json.loads(row["must_haves"]) if row["must_haves"] else None
+    except (TypeError, ValueError):
+        requirements["must_haves"] = None
+    details = row["details"] or {}
+    for key in ("furniture", "placements", "openings", "other_notes"):
+        requirements[key] = details.get(key) or []
+    requirements["occupant"] = details.get("occupant") or "adult"
+    if not requirements["furniture"] and requirements["must_haves"]:
+        requirements["furniture"] = [{"name": n, "qty": 1, "size": "", "notes": ""} for n in requirements["must_haves"]]
+    return requirements
 
 # ============================================================
 # UPDATE REQUIREMENTS
