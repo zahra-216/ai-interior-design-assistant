@@ -396,9 +396,16 @@ export default function App() {
 
         <div className="app__controls">
           <div className="app__account">
-            <span className="app__user-label">Signed in as</span>
-            <span className="app__user">{session.username}</span>
-            <button className="app__logout" onClick={() => handleLogout()}>Log out</button>
+            <span className="app__monogram" aria-hidden="true">
+              {(session.username || '?').charAt(0).toUpperCase()}
+            </span>
+            <span className="app__user">
+              <span className="app__user-name">{session.username}</span>
+              <span className="app__user-label">Signed in</span>
+            </span>
+            <button className="app__action app__action--danger" onClick={() => handleLogout()}>
+              Log out
+            </button>
           </div>
           <div className="app__actions">
             {/* Only rooms that were fully designed count as history */}

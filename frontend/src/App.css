@@ -83,34 +83,45 @@
 
 .app__account {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: var(--space-2);
-  font-size: var(--text-xs);
-  color: var(--ink-soft);
+}
+
+/* Square monogram tile, like an initialled stamp on a drawing */
+.app__monogram {
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--ink);
+  background: var(--sienna-soft);
+  color: var(--ink);
+  font-family: var(--font-display);
+  font-size: var(--text-base);
+  font-weight: 600;
+  line-height: 1;
 }
 
 .app__user {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.15;
+  margin-right: var(--space-2);
+}
+
+.app__user-name {
   font-family: var(--font-display);
   font-size: var(--text-sm);
-  font-weight: 500;
+  font-weight: 600;
   color: var(--ink);
-  padding-right: var(--space-2);
-  border-right: 1px solid var(--stone);
 }
 
-.app__logout {
-  background: none;
-  border: none;
-  padding: 0;
-  font-size: var(--text-xs);
+.app__user-label {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
   color: var(--ink-soft);
-  text-decoration: underline;
-  text-decoration-color: var(--sienna);
-  text-underline-offset: 3px;
-}
-
-.app__logout:hover {
-  color: var(--ink);
 }
 
 .app__actions {
@@ -145,6 +156,17 @@
 .app__action--primary:hover {
   background: var(--sienna);
   border-color: var(--sienna);
+  color: var(--paper);
+}
+
+.app__action--danger {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.app__action--danger:hover {
+  background: var(--danger);
+  border-color: var(--danger);
   color: var(--paper);
 }
 
