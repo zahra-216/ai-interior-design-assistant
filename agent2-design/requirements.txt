@@ -4,6 +4,10 @@ pydantic
 google-genai
 matplotlib
 pillow
+numpy
 psycopg2-binary
 sqlalchemy
 python-dotenv
+requests
+sqlalchemy
+psycopg2-binary

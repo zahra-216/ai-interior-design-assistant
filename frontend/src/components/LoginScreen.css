@@ -1,0 +1,54 @@
+.login-screen {
+  height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--paper);
+}
+
+.login-screen__card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  width: 320px;
+  padding: var(--space-6);
+  background: var(--paper-raised);
+  border: 1px solid var(--stone);
+  border-radius: var(--radius-md);
+}
+
+.login-screen__label {
+  font-size: var(--text-xs);
+  color: var(--sienna);
+  font-weight: 500;
+}
+
+.login-screen__card h2 {
+  font-size: var(--text-lg);
+  margin-bottom: var(--space-2);
+}
+
+.login-screen__card input {
+  padding: var(--space-3);
+  border: 1px solid var(--stone);
+  border-radius: var(--radius-sm);
+}
+
+.login-screen__card input:focus {
+  border-color: var(--sienna);
+  outline: none;
+}
+
+.login-screen__error {
+  color: var(--danger);
+  font-size: var(--text-sm);
+}
+
+.login-screen__switch {
+  background: none;
+  border: none;
+  color: var(--ink-soft);
+  font-size: var(--text-sm);
+  text-decoration: underline;
+  padding: 0;
+}

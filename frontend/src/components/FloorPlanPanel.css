@@ -1,0 +1,96 @@
+.floor-plan {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: var(--space-5) var(--space-6);
+}
+
+.floor-plan__label {
+  display: block;
+  font-size: var(--text-xs);
+  color: var(--sienna);
+  font-weight: 500;
+  margin-bottom: var(--space-1);
+}
+
+.floor-plan__header h2 {
+  font-size: var(--text-xl);
+  margin-bottom: var(--space-4);
+}
+
+.floor-plan--empty {
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  color: var(--ink-soft);
+  gap: var(--space-2);
+}
+
+.floor-plan__status {
+  font-size: var(--text-sm);
+  color: var(--ink-soft);
+}
+
+.floor-plan__sheet {
+  flex: 1;
+  background: var(--paper-raised);
+  border: 1px solid var(--stone);
+  border-radius: var(--radius-md);
+  box-shadow: 0 1px 0 var(--stone);
+  padding: var(--space-5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  animation: sheet-reveal 0.5s ease;
+}
+
+@keyframes sheet-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.floor-plan__sheet {
+  min-height: 420px;
+}
+
+.floor-plan__sheet img {
+  max-width: 100%;
+  max-height: 560px;
+  object-fit: contain;
+}
+
+.floor-plan__revise {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+}
+
+.floor-plan__revise input {
+  flex: 1;
+  padding: var(--space-3);
+  border: 1px solid var(--stone);
+  border-radius: var(--radius-sm);
+  background: var(--paper-raised);
+}
+
+.floor-plan__revise input:focus {
+  border-color: var(--sienna);
+  outline: none;
+}
+
+.floor-plan__notes {
+  margin: var(--space-3) 0 0;
+  padding: var(--space-3) var(--space-4) var(--space-3) var(--space-6);
+  background: var(--stone-soft);
+  border-radius: var(--radius-md);
+  font-size: var(--text-xs);
+  color: var(--ink-soft);
+  line-height: 1.5;
+}

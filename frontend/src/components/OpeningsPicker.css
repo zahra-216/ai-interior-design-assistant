@@ -1,0 +1,96 @@
+.openings-picker {
+  align-self: flex-start;
+  width: 100%;
+  max-width: 320px;
+  padding: var(--space-3) var(--space-4);
+  background: var(--paper-raised);
+  border: var(--line);
+  border-radius: var(--radius-md);
+}
+
+.openings-picker__prompt {
+  font-size: var(--text-xs);
+  color: var(--ink-soft);
+  margin-bottom: var(--space-2);
+}
+
+.openings-picker__room {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.openings-picker__floor {
+  fill: var(--stone-soft);
+}
+
+.openings-picker__wall {
+  stroke: var(--ink);
+  stroke-width: 4;
+  stroke-linecap: square;
+}
+
+.openings-picker__hit {
+  stroke: var(--sienna);
+  stroke-width: 14;
+  stroke-opacity: 0.18;
+  cursor: pointer;
+}
+
+.openings-picker__hit:hover {
+  stroke-opacity: 0.55;
+}
+
+.openings-picker__hit--selected {
+  stroke-opacity: 0;
+}
+
+.openings-picker__hit--selected:hover {
+  stroke-opacity: 0.25;
+}
+
+.openings-picker__door line,
+.openings-picker__door path {
+  stroke: var(--teak);
+  stroke-width: 2;
+}
+
+.openings-picker__door .openings-picker__gap {
+  stroke: var(--stone-soft);
+  stroke-width: 6;
+}
+
+.openings-picker__window line {
+  stroke: #3a8fc7;
+  stroke-width: 1.5;
+}
+
+.openings-picker__window .openings-picker__gap {
+  stroke: var(--stone-soft);
+  stroke-width: 7;
+}
+
+.openings-picker__label {
+  font-size: 9px;
+  fill: var(--ink-soft);
+  text-anchor: middle;
+  dominant-baseline: middle;
+}
+
+.openings-picker__label--strong {
+  fill: var(--sienna);
+  font-weight: 600;
+}
+
+.openings-picker__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.openings-picker__small {
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
+}

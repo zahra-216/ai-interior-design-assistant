@@ -52,28 +52,65 @@ create `.env` in each agent folder, never commit it (already in `.gitignore`).
   "budget": 150000,
   "room_size": "12x10 ft",
   "must_haves": ["sofa", "coffee table", "TV unit"],
-  "color_preference": "neutral tones"
+  "color_preference": "neutral tones",
+  "furniture": [{"name": "small cupboard", "qty": 1, "size": "small", "notes": ""}],
+  "placements": [{"item": "mirror", "relation": "above", "target": "small cupboard", "notes": ""}],
+  "openings": [{"type": "door", "wall": "bottom", "position": "left", "notes": ""}],
+  "other_notes": []
 }
 ```
+
+`furniture`, `placements` and `openings` carry the details (sizes, "mirror above cupboard",
+door/window walls). Walls use plan view: the door wall is `bottom`, the far wall `top`.
+
+**Gemini availability:** agents 1 and 2 share `gemini_client.py`, which falls back through
+several models when one is busy (503) or out of quota (429). Override the order in `.env`:
+`GEMINI_MODELS=gemini-3.6-flash,gemini-3.8-flash,gemini-3.5-flash-lite`
+
+**Layout generation (Agent 2):** Gemini only plans *what* goes in the room;
+`layout_engine.py` decides *where*, with hard rules (no overlaps, gaps, clear door swing,
+no tall furniture in front of windows, walkway to every piece). If Gemini is down, a
+layout is still produced from the built-in size catalog.
 
 **Agent 2 -> Agent 3:**
 ```json
 {
   "layout_image_path": "designs/design_v1.png",
   "furniture_needed": [
-    {"item": "3-seater sofa", "style": "modern", "qty": 1},
-    {"item": "coffee table", "style": "minimalist", "qty": 1}
-  ]
+    {"item": "queen bed", "style": "modern", "qty": 1, "quantity": 1, "color": "navy blue and white", "size": "queen"},
+    {"item": "bedside table", "style": "modern", "qty": 1, "quantity": 2, "color": "navy blue and white"}
+  ],
+  "include_missing": true
 }
 ```
+`qty` = how many product options to return (Agent 4 asks for several when looking for cheaper
+alternatives); `quantity` = how many pieces the room needs. `include_missing` adds a
+`found: false` row for items with no product in the catalog.
 
 **Agent 3 -> Agent 4:**
 ```json
 [
-  {"item": "3-seater sofa", "product_name": "Damro Comfort Sofa", "price": 65000, "retailer": "Damro"},
-  {"item": "coffee table", "product_name": "Singer Oak Table", "price": 18000, "retailer": "Singer"}
+  {"item": "queen bed", "product_name": "Gracia Bed (78\" x 60\")", "price": 79200, "retailer": "Damro",
+   "quantity": 1, "found": true, "color": "gray", "product_url": "https://www.damro.lk/product/...",
+   "note": "Gray, matches your grey theme"},
+  {"item": "bedside table", "product_name": "Carlow Bedside Cupboard", "price": 41000, "retailer": "Damro",
+   "quantity": 2, "found": true, "color": "charcoal gray", "note": "..."}
 ]
 ```
+
+**Product catalog (Agent 3):** `agent3-furniture-search/real_products.csv`, 136 real products from
+Damro, Singer, Softlogic, Cityro, Home 47 and House of Fashions (prices as listed on their websites on
+2026-09-22). Columns: `name, category, style, price, retailer, image_url, color, product_url`.
+Re-run `python import_csv.py real_products.csv` after editing; existing rows are updated.
+Search understands synonyms/sizes ("queen bed", "TV unit", "3-seater"), matches colours by family and
+harmony (navy goes with white, grey, light wood), and explains every match in `note`.
+
+**Agent 4 - budget fitting (`POST /optimize-budget`):** takes the chosen products (with each
+item's colour theme, size, occupant and priority) and the budget. For every item it asks Agent 3 for
+cheaper products that still suit the room, then swaps greedily by *money saved per unit of match
+quality lost* (designer-added extras first, the user's own items last), and undoes any swap that
+turns out not to be needed. If the budget still can't be met, `suggestions` says how much more is
+needed or which pieces to leave out. The frontend shows this behind a "Fit to my budget" button.
 
 **Agent 4 -> Frontend (final result):**
 ```json

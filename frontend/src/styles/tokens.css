@@ -1,0 +1,41 @@
+:root {
+  /* Color */
+  --paper: #FAF7F0;
+  --paper-raised: #FFFFFF;
+  --ink: #1F2420;
+  --ink-soft: #4A4F49;
+  --sienna: #B5601F;
+  --sienna-soft: #E8CBAE;
+  --sage: #5C6B57;
+  --sage-soft: #DCE3D8;
+  --stone: #D8D2C4;
+  --stone-soft: #EDEAE1;
+  --teak: #8B7355;
+  --danger: #A63D2F;
+
+  /* Type */
+  --font-display: 'Fraunces', Georgia, 'Times New Roman', serif;
+  --font-body: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+
+  --text-xs: 0.8125rem;
+  --text-sm: 0.9375rem;
+  --text-base: 1rem;
+  --text-lg: 1.25rem;
+  --text-xl: 1.75rem;
+  --text-2xl: 2.5rem;
+
+  /* Spacing */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+  --space-8: 64px;
+
+  /* Structure */
+  --line: 1px solid var(--stone);
+  --radius-sm: 3px;
+  --radius-md: 6px;
+}
