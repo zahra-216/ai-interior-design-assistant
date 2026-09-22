@@ -395,18 +395,6 @@ export default function App() {
         <span className="app__tagline">AI interior design, made for Sri Lankan homes</span>
 
         <div className="app__controls">
-          <div className="app__account">
-            <span className="app__monogram" aria-hidden="true">
-              {(session.username || '?').charAt(0).toUpperCase()}
-            </span>
-            <span className="app__user">
-              <span className="app__user-name">{session.username}</span>
-              <span className="app__user-label">Signed in</span>
-            </span>
-            <button className="app__action app__action--danger" onClick={() => handleLogout()}>
-              Log out
-            </button>
-          </div>
           <div className="app__actions">
             {/* Only rooms that were fully designed count as history */}
             <RoomsMenu
@@ -442,6 +430,19 @@ export default function App() {
               onRequirementsComplete={handleRequirementsComplete}
               locked={!!requirements}
             />
+            {/* Account, in the bottom-left corner under the chat */}
+            <div className="app__account">
+              <span className="app__monogram" aria-hidden="true">
+                {(session.username || '?').charAt(0).toUpperCase()}
+              </span>
+              <span className="app__user">
+                <span className="app__user-name">{session.username}</span>
+                <span className="app__user-label">Signed in</span>
+              </span>
+              <button className="app__action app__action--danger" onClick={() => handleLogout()}>
+                Log out
+              </button>
+            </div>
           </div>
 
           <div className="app__workspace">
