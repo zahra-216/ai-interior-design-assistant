@@ -108,14 +108,20 @@
   border: none;
   color: var(--ink-soft);
   font-size: var(--text-sm);
-  text-decoration: underline;
-  text-decoration-color: var(--sienna);
-  text-underline-offset: 3px;
   padding: 0;
 }
 
-.login-screen__switch:hover {
+/* Only the action words ("Sign up" / "Log in") are underlined */
+.login-screen__switch-action {
   color: var(--ink);
+  font-weight: 500;
+  text-decoration: underline;
+  text-decoration-color: var(--sienna);
+  text-underline-offset: 3px;
+}
+
+.login-screen__switch:hover .login-screen__switch-action {
+  color: var(--sienna);
 }
 
 /* Title block along the bottom edge, as on a drawing sheet */

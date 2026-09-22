@@ -29,13 +29,15 @@ export default function RoomsMenu({ projects, currentId, onOpen, onDelete, onRef
 
   return (
     <div className="rooms-menu" ref={ref}>
-      <button className="btn-secondary rooms-menu__toggle" onClick={() => setOpen(o => !o)} aria-expanded={open}>
+      <button className="app__action rooms-menu__toggle" onClick={() => setOpen(o => !o)} aria-expanded={open}>
         My rooms{projects.length ? ` (${projects.length})` : ''}
       </button>
 
       {open && (
         <div className="rooms-menu__panel" role="menu">
-          {projects.length === 0 && <p className="rooms-menu__empty">No rooms yet.</p>}
+          {projects.length === 0 && (
+            <p className="rooms-menu__empty">No designed rooms yet. A room appears here once its layout is generated.</p>
+          )}
           {projects.map(p => (
             <div
               key={p.id}

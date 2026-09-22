@@ -75,7 +75,8 @@ export default function LoginScreen({ onAuth, notice }) {
         </button>
 
         <button type="button" className="login-screen__switch" onClick={switchMode}>
-          {isLogin ? "Don't have an account? Sign up" : 'Already have an account? Log in'}
+          {isLogin ? "Don't have an account? " : 'Already have an account? '}
+          <span className="login-screen__switch-action">{isLogin ? 'Sign up' : 'Log in'}</span>
         </button>
 
         <div className="login-sheet__titleblock" aria-hidden="true">

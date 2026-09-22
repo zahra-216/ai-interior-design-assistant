@@ -393,20 +393,27 @@ export default function App() {
       <header className="app__header">
         <span className="app__wordmark">Studio</span>
         <span className="app__tagline">AI interior design, made for Sri Lankan homes</span>
-        <RoomsMenu
-          projects={projects}
-          currentId={projectId}
-          onOpen={openProject}
-          onDelete={handleDeleteProject}
-          onRefresh={refreshProjects}
-        />
-        <button className="btn-secondary app__new-chat" onClick={handleNewChat}>
-          New chat
-        </button>
-        <span className="app__user">{session.username}</span>
-        <button className="btn-secondary app__logout" onClick={() => handleLogout()}>
-          Log out
-        </button>
+
+        <div className="app__controls">
+          <div className="app__account">
+            <span className="app__user-label">Signed in as</span>
+            <span className="app__user">{session.username}</span>
+            <button className="app__logout" onClick={() => handleLogout()}>Log out</button>
+          </div>
+          <div className="app__actions">
+            {/* Only rooms that were fully designed count as history */}
+            <RoomsMenu
+              projects={projects.filter(p => p.status === 'complete')}
+              currentId={projectId}
+              onOpen={openProject}
+              onDelete={handleDeleteProject}
+              onRefresh={refreshProjects}
+            />
+            <button className="app__action app__action--primary" onClick={handleNewChat}>
+              New chat
+            </button>
+          </div>
+        </div>
       </header>
 
       {error && (

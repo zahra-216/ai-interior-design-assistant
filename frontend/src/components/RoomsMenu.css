@@ -1,12 +1,5 @@
 .rooms-menu {
   position: relative;
-  align-self: center;
-  margin-left: auto;
-}
-
-.rooms-menu__toggle {
-  padding: var(--space-2) var(--space-4);
-  font-size: var(--text-sm);
 }
 
 .rooms-menu__panel {
@@ -17,9 +10,7 @@
   max-height: 420px;
   overflow-y: auto;
   background: var(--paper-raised);
-  border: var(--line);
-  border-radius: var(--radius-md);
-  box-shadow: 0 8px 24px rgba(31, 36, 32, 0.12);
+  border: 1px solid var(--ink);
   z-index: 20;
   padding: var(--space-2);
 }
@@ -35,8 +26,11 @@
   align-items: center;
   gap: var(--space-3);
   padding: var(--space-3);
-  border-radius: var(--radius-sm);
   cursor: pointer;
+}
+
+.rooms-menu__item + .rooms-menu__item {
+  border-top: 1px solid var(--stone-soft);
 }
 
 .rooms-menu__item:hover,
