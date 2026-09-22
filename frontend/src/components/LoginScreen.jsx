@@ -9,57 +9,80 @@ export default function LoginScreen({ onAuth, notice }) {
   const [error, setError] = useState(null)
   const [loading, setLoading] = useState(false)
 
+  const isLogin = mode === 'login'
+
   async function handleSubmit(e) {
     e.preventDefault()
     setError(null)
     setLoading(true)
     try {
-      const res = mode === 'login'
+      const res = isLogin
         ? await login(username, password)
         : await signup(username, password)
       onAuth(res)
     } catch (err) {
-      setError(mode === 'login' ? 'Invalid username or password.' : 'Could not create account — username may be taken.')
+      setError(isLogin ? 'Invalid username or password.' : 'Could not create account — username may be taken.')
     } finally {
       setLoading(false)
     }
   }
 
+  function switchMode() {
+    setMode(isLogin ? 'signup' : 'login')
+    setError(null)
+  }
+
   return (
     <div className="login-screen">
-      <form className="login-screen__card" onSubmit={handleSubmit}>
-        <span className="login-screen__label">Studio</span>
-        <h2>{mode === 'login' ? 'Welcome back' : 'Create an account'}</h2>
+      {/* Styled like a sheet from an architect's drawing set */}
+      <form className="login-sheet" onSubmit={handleSubmit}>
+        <div className="login-sheet__head">
+          <span className="login-sheet__wordmark">Studio</span>
+          <span className="login-sheet__tagline">AI interior design, made for Sri Lankan homes</span>
+        </div>
 
-        <input
-          type="text"
-          placeholder="Username"
-          value={username}
-          onChange={e => setUsername(e.target.value)}
-          required
-        />
-        <input
-          type="password"
-          placeholder="Password"
-          value={password}
-          onChange={e => setPassword(e.target.value)}
-          required
-        />
+        <h2>{isLogin ? 'Welcome back' : 'Create an account'}</h2>
+
+        <label className="login-sheet__field">
+          <span>Username</span>
+          <input
+            type="text"
+            autoComplete="username"
+            value={username}
+            onChange={e => setUsername(e.target.value)}
+            required
+          />
+        </label>
+
+        <label className="login-sheet__field">
+          <span>Password</span>
+          <input
+            type="password"
+            autoComplete={isLogin ? 'current-password' : 'new-password'}
+            value={password}
+            onChange={e => setPassword(e.target.value)}
+            minLength={isLogin ? undefined : 6}
+            required
+          />
+          {!isLogin && <small>At least 6 characters</small>}
+        </label>
 
         {notice && !error && <p className="login-screen__notice">{notice}</p>}
         {error && <p className="login-screen__error">{error}</p>}
 
-        <button className="btn" type="submit" disabled={loading}>
-          {loading ? 'Please wait...' : mode === 'login' ? 'Log in' : 'Sign up'}
+        <button className="btn login-sheet__submit" type="submit" disabled={loading}>
+          {loading ? 'Please wait...' : isLogin ? 'Log in' : 'Sign up'}
         </button>
 
-        <button
-          type="button"
-          className="login-screen__switch"
-          onClick={() => setMode(mode === 'login' ? 'signup' : 'login')}
-        >
-          {mode === 'login' ? "Don't have an account? Sign up" : 'Already have an account? Log in'}
+        <button type="button" className="login-screen__switch" onClick={switchMode}>
+          {isLogin ? "Don't have an account? Sign up" : 'Already have an account? Log in'}
         </button>
+
+        <div className="login-sheet__titleblock" aria-hidden="true">
+          <span>Sheet 01</span>
+          <span>{isLogin ? 'Sign in' : 'New account'}</span>
+          <span>Colombo, Sri Lanka</span>
+        </div>
       </form>
     </div>
   )
