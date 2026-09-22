@@ -27,20 +27,60 @@ User (React frontend)
 /frontend                 - React app
 ```
 
-## Setup (per agent)
+## First-time setup (new machine)
+
+You need **Python 3.11+**, **Node.js 18+** and **PostgreSQL** (any recent version).
+
+**1. Create an empty database** (the agents create their own tables on first start):
 
 ```bash
-cd agent1-requirements
-python -m venv venv
-source venv/bin/activate      # Windows: venv\Scripts\activate
-pip install -r requirements.txt
-uvicorn main:app --reload --port 8001
+psql -U postgres -c "CREATE DATABASE interior_design;"
 ```
 
-Repeat for agent2 (port 8002), agent3 (port 8003), agent4 (port 8004).
+**2. Create each agent's `.env`** from its example and fill in your values:
 
-Each agent needs a `.env` file for secrets (Gemini API key, DB connection string) —
-create `.env` in each agent folder, never commit it (already in `.gitignore`).
+| Folder | Copy | Fill in |
+|---|---|---|
+| `agent1-requirements` | `.env.example` -> `.env` | `GEMINI_API_KEY`, `DATABASE_URL`, `AUTH_SECRET` |
+| `agent2-design` | `.env.example` -> `.env` | same `GEMINI_API_KEY`, same `DATABASE_URL`, **same** `AUTH_SECRET` as agent1 |
+| `agent3-furniture-search` | `.env.example` -> `.env` | same `DATABASE_URL` |
+| `agent4-cost-estimation` | nothing | no settings |
+
+Get a free Gemini key at https://aistudio.google.com/apikey (use your own; each key has its own
+daily quota). Generate `AUTH_SECRET` with `python -c "import secrets; print(secrets.token_urlsafe(48))"`.
+
+**3. Install each agent** (repeat in all four agent folders):
+
+```bash
+python -m venv venv
+venv\Scripts\activate          # macOS/Linux: source venv/bin/activate
+pip install -r requirements.txt
+```
+
+**4. Start the agents**, one terminal each (inside the folder, with its venv active):
+
+| Folder | Command |
+|---|---|
+| `agent1-requirements` | `uvicorn main:app --reload --port 8001` |
+| `agent2-design` | `uvicorn main:app --reload --port 8002` |
+| `agent3-furniture-search` | `uvicorn main:app --reload --port 8003` |
+| `agent4-cost-estimation` | `uvicorn main:app --reload --port 8004` |
+
+**5. Load the product catalog** (once, in `agent3-furniture-search` with its venv active):
+
+```bash
+python import_csv.py real_products.csv
+```
+
+**6. Start the frontend** and open http://localhost:5173, then sign up:
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Never commit `.env` files (they are in `.gitignore`); the `.env.example` files are the shared templates.
 
 ## Login and security
 

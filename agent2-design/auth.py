@@ -23,6 +23,8 @@ load_dotenv()
 
 _DEV_SECRET = "dev-only-insecure-secret-change-me"
 SECRET = os.getenv("AUTH_SECRET") or _DEV_SECRET
+if SECRET.startswith("replace-with"):  # still the .env.example placeholder
+    SECRET = _DEV_SECRET
 TOKEN_TTL_S = int(float(os.getenv("AUTH_TOKEN_TTL_HOURS", "168")) * 3600)
 
 if SECRET == _DEV_SECRET:

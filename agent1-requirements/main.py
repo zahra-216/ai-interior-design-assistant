@@ -40,7 +40,7 @@ if not os.getenv("GEMINI_API_KEY"):
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 if not DATABASE_URL:
-    raise ValueError("DATABASE_URL is not configured in .env")
+    raise ValueError("DATABASE_URL is not configured in .env (copy .env.example to .env)")
 
 engine = create_engine(DATABASE_URL)
 
